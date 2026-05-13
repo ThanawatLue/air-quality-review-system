@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Transformation | AQR Program Tools</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="sidebar-collapsed">
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner-container">
+            <div class="modern-spinner"></div>
+            <p id="loadingText">AQR Program is transforming data...</p>
+        </div>
+    </div>
+
+    <!-- Global Toggle -->
+    <div class="sidebar-toggle-btn" id="sidebarToggle" title="Toggle Sidebar">
+        <i class="fas fa-chevron-left"></i>
+    </div>
+
+    <div class="app-wrapper">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">AQR <span>Dashboard</span></div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h3>MAIN MENU</h3>
+                    <ul class="nav-menu">
+                        <li><a href="{{ url_for('aqr') }}"><i class="fas fa-chart-line"></i> Air Quality Review</a></li>
+                        <li><a href="{{ url_for('transform') }}" class="active"><i class="fas fa-exchange-alt"></i> Data Transformation</a></li>
+                        <li><a href="#"><i class="fas fa-circle-info"></i> Information</a></li>
+                        <li><a href="#"><i class="fas fa-question-circle"></i> About</a></li>
+                        <li><a href="javascript:location.reload()" class="reset-link"><i class="fas fa-undo"></i> Reset Application</a></li>
+                        <li><a href="javascript:shutdownApp()" class="close-link"><i class="fas fa-power-off"></i> Close Application</a></li>
+                    </ul>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <div class="breadcrumb">Modules / Data Transformation</div>
+                <div style="display: flex; align-items: center; gap: 20px;">
+                    <div class="status-pill success">AQR Program Online</div>
+                </div>
+            </header>
+
+            <div class="content-container">
+                <section class="card animate-in">
+                    <div class="card-header">
+                        <h2>BAS Report Splitter</h2>
+                        <div class="ai-assistant-badge">
+                            <i class="fas fa-robot"></i>
+                            <span id="aiHelper1">AQR Program: I will help you split combined BAS exports into individual room files.</span>
+                        </div>
+                    </div>
+                    <div class="aqr-helper">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>Select the source CSV files from BAS and a destination folder.</span>
+                    </div>
+                    
+                    <div class="config-vertical-stack">
+                        <!-- Module 5 -->
+                        <div class="input-row">
+                            <label>Module 5 File (Mo5.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="mo5Path" readonly placeholder="Optional: Select Mo5.csv">
+                                <button onclick="browseFile('mo5Path')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+
+                        <!-- Main Plant -->
+                        <div class="input-row mt-20">
+                            <label>Main Plant Temp (RMT.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="rmtPath" readonly placeholder="Optional: Select RMT.csv">
+                                <button onclick="browseFile('rmtPath')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+                        <div class="input-row mt-20">
+                            <label>Main Plant Hum (RMH.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="rmhPath" readonly placeholder="Optional: Select RMH.csv">
+                                <button onclick="browseFile('rmhPath')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+                        <div class="input-row mt-20">
+                            <label>Main Plant Pres (RPT.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="rptPath" readonly placeholder="Optional: Select RPT.csv">
+                                <button onclick="browseFile('rptPath')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+
+                        <!-- Pilot Plant -->
+                        <div class="input-row mt-20">
+                            <label>Pilot Plant Temp (RMT_Pilot.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="pilotRmtPath" readonly placeholder="Optional: Select RMT_Pilot.csv">
+                                <button onclick="browseFile('pilotRmtPath')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+                        <div class="input-row mt-20">
+                            <label>Pilot Plant Hum (RMH_Pilot.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="pilotRmhPath" readonly placeholder="Optional: Select RMH_Pilot.csv">
+                                <button onclick="browseFile('pilotRmhPath')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+                        <div class="input-row mt-20">
+                            <label>Pilot Plant Pres (RPT_Pilot.csv)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="pilotRptPath" readonly placeholder="Optional: Select RPT_Pilot.csv">
+                                <button onclick="browseFile('pilotRptPath')" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+
+                        <!-- Destination -->
+                        <div class="input-row mt-30">
+                            <label>Destination Folder</label>
+                            <div class="full-path-input">
+                                <input type="text" id="outputDir" readonly placeholder="Select where to save individual files">
+                                <button onclick="browseFolder()" class="btn-browse">Browse Folder</button>
+                            </div>
+                        </div>
+
+                        <button id="transformBtn" class="btn-glow-primary-large mt-30">Execute Report Splitting</button>
+                    </div>
+                </section>
+
+                <!-- Status & Log -->
+                <section id="statusSection" class="card no-padding overflow-hidden animate-in" style="display:none;">
+                    <div class="status-banner-modern">
+                        <div class="status-info">
+                            <div id="statusIcon" class="status-dot pulse"></div>
+                            <p id="statusMessage" class="m-0 font-bold">AQR Program: Processing reports...</p>
+                        </div>
+                    </div>
+                    <div class="log-header">Processing Log</div>
+                    <pre id="logOutput" class="modern-terminal"></pre>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.getElementById('sidebarToggle').addEventListener('click', () => {
+            document.body.classList.toggle('sidebar-collapsed');
+        });
+
+        async function browseFile(targetId) {
+            const res = await fetch('/browse-file-csv');
+            const data = await res.json();
+            if (data.path) {
+                document.getElementById(targetId).value = data.path;
+            }
+        }
+
+        async function browseFolder() {
+            const res = await fetch('/browse-folder');
+            const data = await res.json();
+            if (data.path) {
+                document.getElementById('outputDir').value = data.path;
+            }
+        }
+
+        document.getElementById('transformBtn').onclick = async () => {
+            const mo5Path = document.getElementById('mo5Path').value;
+            const rmtPath = document.getElementById('rmtPath').value;
+            const rmhPath = document.getElementById('rmhPath').value;
+            const rptPath = document.getElementById('rptPath').value;
+            const pilotRmtPath = document.getElementById('pilotRmtPath').value;
+            const pilotRmhPath = document.getElementById('pilotRmhPath').value;
+            const pilotRptPath = document.getElementById('pilotRptPath').value;
+            const outputDir = document.getElementById('outputDir').value;
+
+            if (!outputDir) {
+                alert("Please select a destination folder.");
+                return;
+            }
+
+            if (!mo5Path && (!rmtPath || !rmhPath || !rptPath) && (!pilotRmtPath || !pilotRmhPath || !pilotRptPath)) {
+                alert("Please select at least Module 5 file OR all 3 Main Plant files OR all 3 Pilot Plant files.");
+                return;
+            }
+
+            const statusSection = document.getElementById('statusSection');
+            const logOutput = document.getElementById('logOutput');
+            const loadingOverlay = document.getElementById('loadingOverlay');
+            
+            statusSection.style.display = 'block';
+            logOutput.innerText = "Initializing Splitter Engine...\n";
+            loadingOverlay.style.display = 'flex';
+
+            try {
+                const response = await fetch('/api/transform/split-reports', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mo5_file: mo5Path,
+                        rmt_file: rmtPath,
+                        rmh_file: rmhPath,
+                        rpt_file: rptPath,
+                        pilot_rmt_file: pilotRmtPath,
+                        pilot_rmh_file: pilotRmhPath,
+                        pilot_rpt_file: pilotRptPath,
+                        output_dir: outputDir
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (result.error) {
+                    logOutput.innerText += `Error: ${result.error}\n`;
+                    document.getElementById('statusMessage').innerText = "AQR Program: Processing Failed.";
+                    document.getElementById('statusIcon').className = "status-dot error";
+                } else {
+                    result.logs.forEach(msg => {
+                        logOutput.innerText += msg + "\n";
+                    });
+                    document.getElementById('statusMessage').innerText = "AQR Program: Processing Complete!";
+                    document.getElementById('statusIcon').className = "status-dot success";
+                }
+            } catch (err) {
+                logOutput.innerText += `System Error: ${err.message}\n`;
+            } finally {
+                loadingOverlay.style.display = 'none';
+                logOutput.scrollTop = logOutput.scrollHeight;
+            }
+        };
+
+        function shutdownApp() {
+            if (confirm('Are you sure you want to close the AQR Program?')) {
+                fetch('/shutdown').then(() => {
+                    document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;"><h2>AQR Program is shutting down...</h2></div>';
+                    setTimeout(() => window.close(), 1000);
+                });
+            }
+        }
+    </script>
+</body>
+</html>

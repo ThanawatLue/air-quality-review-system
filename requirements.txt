@@ -1,0 +1,19 @@
+# Core dependencies
+flask>=2.0.0
+pandas>=1.3.0
+openpyxl>=3.0.0
+
+# AI/ML dependencies (Commented Out - AI Module Removed)
+# google-genai>=0.3.0
+
+# Data visualization
+plotly>=5.0.0
+
+# Document generation (Commented Out - AI Module Removed)
+# python-docx>=0.8.11
+
+# Image processing (Commented Out - AI Module Removed)
+# Pillow>=9.0.0
+
+# Build tool
+pyinstaller>=5.0.0

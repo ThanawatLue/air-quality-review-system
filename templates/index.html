@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Web App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <h2>Menu</h2>
+            <ul>
+                <li><a href="/"><span>Home</span></a></li>
+                <li><a href="/aqr"><span>Air Quality Review</span></a></li>
+                <li><a href="#"><span>About</span></a></li>
+                <li><a href="#"><span>Services</span></a></li>
+                <li><a href="#"><span>Contact</span></a></li>
+            </ul>
+        </aside>
+        <main class="main-content">
+            <h1>Welcome to your application</h1>
+            <p>This is the main content area.</p>
+        </main>
+    </div>
+</body>
+</html>

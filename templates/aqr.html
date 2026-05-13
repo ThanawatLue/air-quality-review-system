@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AQR Dashboard | AQR Program Air Quality Review</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
+</head>
+<body class="sidebar-collapsed">
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner-container">
+            <div class="modern-spinner"></div>
+            <p id="loadingText">AQR Program is processing data...</p>
+        </div>
+    </div>
+
+    <!-- Global Toggle -->
+    <div class="sidebar-toggle-btn" id="sidebarToggle" title="Toggle Sidebar">
+        <i class="fas fa-chevron-left"></i>
+    </div>
+
+    <div class="app-wrapper">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">AQR <span>Dashboard</span></div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 5px;">Version 1.1.0</div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h3>MAIN MENU</h3>
+                    <ul class="nav-menu">
+                        <li><a href="{{ url_for('aqr') }}" class="active"><i class="fas fa-chart-line"></i> Air Quality Review</a></li>
+                        <li><a href="{{ url_for('transform') }}"><i class="fas fa-exchange-alt"></i> Data Transformation</a></li>
+                        <li><a href="#"><i class="fas fa-circle-info"></i> Information</a></li>
+                        <li><a href="#"><i class="fas fa-question-circle"></i> About</a></li>
+                        <li><a href="javascript:location.reload()" class="reset-link"><i class="fas fa-undo"></i> Reset Application</a></li>
+                        <li><a href="javascript:shutdownApp()" class="close-link"><i class="fas fa-power-off"></i> Close Application</a></li>
+                    </ul>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <div class="breadcrumb">Modules / Air Quality Review</div>
+                <div style="display: flex; align-items: center; gap: 20px;">
+                    <button id="darkModeToggle" class="btn-browse" style="width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 12px;" title="Toggle Dark Mode">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <div class="status-pill success">AQR Program Online</div>
+                </div>
+            </header>
+
+            <div class="content-container">
+                <!-- STEP 1: Configuration -->
+                <section class="card animate-in">
+                    <div class="card-header">
+                        <h2>Step 1: Configuration</h2>
+                        <div class="ai-assistant-badge">
+                            <i class="fas fa-robot"></i>
+                            <span id="aiHelper1">AQR Program: Waiting for valid data paths...</span>
+                        </div>
+                    </div>
+                    <div class="aqr-helper">
+                        <i class="fas fa-lightbulb"></i>
+                        <span>Select the root folder containing your CSV data and the corresponding Excel limit file.</span>
+                    </div>
+                    <div class="config-vertical-stack">
+                        <div class="input-row">
+                            <label>Analysis Folder Path</label>
+                            <div class="full-path-input">
+                                <input type="text" id="folderPath" readonly placeholder="No folder selected">
+                                <button onclick="browseFolder()" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+                        <div class="input-row mt-20">
+                            <label>Limit File Path (.xlsx)</label>
+                            <div class="full-path-input">
+                                <input type="text" id="setpointPath" readonly placeholder="No file selected">
+                                <button onclick="browseFile()" class="btn-browse">Browse</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- STEP 2: Analysis Period -->
+                <section id="sidebarDateTime" class="card animate-in" style="display:none;">
+                    <div class="card-header">
+                        <h2>Step 2: Analysis Period</h2>
+                        <div class="ai-assistant-badge">
+                            <i class="fas fa-robot"></i>
+                            <span id="aiHelper2">AQR Program: Path validated. Ready to scan.</span>
+                        </div>
+                    </div>
+                    <div class="aqr-helper">
+                        <i class="fas fa-calendar-alt"></i>
+                        <span>Define the temporal boundaries for your analysis. Default values are inferred from file metadata.</span>
+                    </div>
+                    <div class="config-vertical-stack">
+                        <div class="input-row"><label>Start Date & Time</label><input type="datetime-local" id="startDate" class="main-input-modern"></div>
+                        <div class="input-row mt-20"><label>End Date & Time</label><input type="datetime-local" id="endDate" class="main-input-modern"></div>
+                        <button id="loadRoomsBtn" class="btn-glow-primary-large mt-30">Scan & Load Available Rooms</button>
+                    </div>
+                </section>
+
+                <!-- STEP 3: Room Selection & Limits -->
+                <div id="roomSelectionSection" style="display:none;">
+                    <section class="card animate-in">
+                        <div class="card-header">
+                            <h2>Step 3: Select Rooms</h2>
+                            <div class="ai-assistant-badge">
+                                <i class="fas fa-robot"></i>
+                                <span id="aiHelper3">AQR Program: Please select targets for analysis.</span>
+                            </div>
+                        </div>
+                        <div class="aqr-helper">
+                            <i class="fas fa-filter"></i>
+                            <span>Choose specific areas or individual rooms. Use the search bars to narrow down large datasets.</span>
+                        </div>
+                        <div class="room-grid-main">
+                            <!-- AREAS -->
+                            <div class="room-col-modern">
+                                <div class="col-title-bar">
+                                    <span>AREAS</span>
+                                    <div class="mini-actions">
+                                        <button id="areaSelectAllBtn" title="Select All Areas">All</button>
+                                        <button id="areaDeselectAllBtn" title="Clear Areas">None</button>
+                                    </div>
+                                </div>
+                                <input type="text" id="areaSearch" placeholder="Filter areas..." class="mini-search">
+                                <ul id="areaList" class="scroll-list"></ul>
+                            </div>
+                            <!-- AVAILABLE -->
+                            <div class="room-col-modern">
+                                <div class="col-title-bar">
+                                    <span>AVAILABLE ROOMS</span>
+                                    <div class="mini-actions">
+                                        <button id="availSelectAllBtn" title="Select All Available">All</button>
+                                    </div>
+                                </div>
+                                <input type="text" id="availableSearch" placeholder="Filter rooms..." class="mini-search">
+                                <ul id="availableRoomList" class="scroll-list"></ul>
+                            </div>
+                            <!-- SELECTED -->
+                            <div class="room-col-modern selected-theme">
+                                <div class="col-title-bar">
+                                    <span>SELECTED ROOMS <span id="selectionBadge" class="status-pill" style="background: var(--accent); color: white; margin-left: 10px; padding: 2px 10px;">0</span></span>
+                                    <div class="mini-actions">
+                                        <button id="selectedDeselectAllBtn" title="Clear Selection">None</button>
+                                    </div>
+                                </div>
+                                <input type="text" id="selectedSearch" placeholder="Filter selected..." class="mini-search">
+                                <ul id="selectedRoomList" class="scroll-list"></ul>
+                            </div>
+                        </div>
+
+                        <div class="footer-actions">
+                            <button id="analyzeBtn" class="btn-glow-primary">Run Analysis & Show Log</button>
+                            <button id="plotBtn" class="btn-glow-secondary">Generate Visual Graphs</button>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- RESULTS SECTION -->
+                <section id="statusSection" class="card no-padding overflow-hidden animate-in" style="display:none;">
+                    <div class="status-banner-modern">
+                        <div class="status-info">
+                            <div id="statusIcon" class="status-dot pulse"></div>
+                            <p id="statusMessage" class="m-0 font-bold">AQR Program: Processing...</p>
+                        </div>
+                        <div id="resultLinks" class="download-container"></div>
+                    </div>
+                    <div class="log-header">AQR Program Detailed Analysis Log</div>
+                    <pre id="logOutput" class="modern-terminal"></pre>
+                </section>
+
+                <div id="graphResults" class="animate-in" style="display:none;">
+                    <!-- Heatmap Chart -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Violation Intensity Heatmap (Day vs Hour)</h2>
+                            <div class="ai-assistant-badge">
+                                <i class="fas fa-fire"></i>
+                                <span>Density of concurrent violations</span>
+                            </div>
+                        </div>
+                        <div id="violationHeatmap" style="height: 400px; width: 100%;"></div>
+                    </div>
+
+                    <!-- Timeline Chart -->
+                    <div class="card">
+                        <div class="card-header"><h2>Violation Timeline Analysis</h2></div>
+                        <div id="violationTimelineChart" style="height: 450px; width: 100%;"></div>
+                    </div>
+
+                    <!-- Summary Grid -->
+                    <div class="summary-grid-2col">
+                        <div class="card">
+                            <div class="card-header"><h2>Violation Overview (Summary Chart)</h2></div>
+                            <div id="summaryViolationChart" style="height: 400px; width: 100%;"></div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header"><h2>Statistical Violation Table</h2></div>
+                            <div class="table-container-modern" style="max-height: 400px; overflow-y: auto;">
+                                <table class="dashboard-table">
+                                    <thead>
+                                        <tr><th>Room ID</th><th>Room Name</th><th>Temp</th><th>Hum</th><th>Press</th></tr>
+                                    </thead>
+                                    <tbody id="summaryTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Plots Stack -->
+                    <div class="plots-stack">
+                        <!-- Temp -->
+                        <div class="card plot-wrapper">
+                            <div class="card-header">
+                                <h2>Temperature Monitor (°C)</h2>
+                                <div class="header-limit-inputs">
+                                    <label>High:</label>
+                                    <input type="number" id="limitTempHigh" value="25" step="0.1" class="mini-limit-input">
+                                </div>
+                            </div>
+                            <div id="plotTemp" class="h-full"></div>
+                        </div>
+
+                        <!-- Hum -->
+                        <div class="card plot-wrapper">
+                            <div class="card-header">
+                                <h2>Humidity Monitor (%RH)</h2>
+                                <div class="header-limit-inputs">
+                                    <label>High:</label>
+                                    <input type="number" id="limitHumHigh" value="60" step="0.1" class="mini-limit-input">
+                                    <label>Low:</label>
+                                    <input type="number" id="limitHumLow" value="30" step="0.1" class="mini-limit-input">
+                                </div>
+                            </div>
+                            <div id="plotHum" class="h-full"></div>
+                        </div>
+
+                        <!-- Press -->
+                        <div class="card plot-wrapper">
+                            <div class="card-header">
+                                <h2>Pressure Monitor (Pa)</h2>
+                                <div class="header-limit-inputs">
+                                    <label>High:</label>
+                                    <input type="number" id="limitPressHigh" value="20" step="0.1" class="mini-limit-input">
+                                    <label>Low:</label>
+                                    <input type="number" id="limitPressLow" value="10" step="0.1" class="mini-limit-input">
+                                </div>
+                            </div>
+                            <div id="plotPress" class="h-full"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+
+    <!-- Error Modal Popup -->
+    <div id="errorModal" class="error-modal-overlay">
+        <div class="error-modal">
+            <div class="error-modal-header">
+                <div class="error-modal-icon">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <h3 class="error-modal-title" id="errorModalTitle">Error</h3>
+                <span class="error-modal-code" id="errorModalCode">ERR-000</span>
+            </div>
+            <p class="error-modal-message" id="errorModalMessage">An error occurred.</p>
+            <button class="error-modal-button" onclick="closeErrorModal()">OK</button>
+        </div>
+    </div>
+
+    <script>
+        function showErrorModal(title, code, message) {
+            document.getElementById('errorModalTitle').innerText = title;
+            document.getElementById('errorModalCode').innerText = code;
+            document.getElementById('errorModalMessage').innerText = message;
+            document.getElementById('errorModal').classList.add('active');
+        }
+
+        function closeErrorModal() {
+            document.getElementById('errorModal').classList.remove('active');
+        }
+
+        function shutdownApp() {
+            if (confirm('Are you sure you want to close the AQR Program?')) {
+                fetch('/shutdown').then(() => {
+                    document.body.innerHTML = '<div style="display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;"><h2>AQR Program is shutting down...</h2></div>';
+                    setTimeout(() => window.close(), 1000);
+                });
+            }
+        }
+    </script>
+</body>
+</html>
