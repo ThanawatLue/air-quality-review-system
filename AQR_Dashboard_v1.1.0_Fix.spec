@@ -1,0 +1,48 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+
+a = Analysis(
+    ['app.py'],
+    pathex=[],
+    binaries=[],
+    datas=[
+        ('templates', 'templates'),
+        ('static', 'static'),
+        ('data', 'data'),
+        ('README.md', '.'),
+        ('BUILD_INSTRUCTIONS.md', '.'),
+        ('CODEBASE_GRAPH.md', '.'),
+        ('GAMP5.md', '.'),
+        ('PROJECT_STRUCTURE.md', '.'),
+    ],
+    hiddenimports=['xlsxwriter'],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.datas,
+    [],
+    name='AQR_Dashboard_v1.1.0_Fix',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    version='app_version_info.txt',
+)

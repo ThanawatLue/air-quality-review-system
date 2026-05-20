@@ -896,13 +896,23 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
 
 import glob as _glob
 
-def prepare_df_phase2(raw_data_path):
+def prepare_df_phase2(raw_data_path, room_id=None):
     """Read Phase 2 EMS CSV files (separate RMT/RMH/RDP) and merge into unified DataFrame.
     Returns (room_id, df) where df has columns: DateTime, Temperature, Humidity, Pressure.
     """
     def _find(suffix):
-        found = _glob.glob(os.path.join(raw_data_path, f'*_{suffix}_*.Csv'))
-        found += _glob.glob(os.path.join(raw_data_path, f'*_{suffix}_*.csv'))
+        found = []
+        prefix = f"{room_id}_{suffix}_" if room_id else f"_{suffix}_"
+        prefix_lower = prefix.lower()
+        for root, _, files in os.walk(raw_data_path):
+            for f in files:
+                if f.lower().endswith('.csv'):
+                    if room_id:
+                        if f.lower().startswith(prefix_lower):
+                            found.append(os.path.join(root, f))
+                    else:
+                        if f'_{suffix.upper()}_' in f.upper():
+                            found.append(os.path.join(root, f))
         return sorted(found)
 
     rmt_files = _find('RMT')
@@ -910,10 +920,10 @@ def prepare_df_phase2(raw_data_path):
     rdp_files = _find('RDP')
 
     if not rmt_files:
-        raise ValueError(f"ERR-005: No Temperature file (_RMT_) found in {raw_data_path}")
+        raise ValueError(f"ERR-005: No Temperature file (_RMT_) found in {raw_data_path} for {room_id}")
 
     # Room ID = prefix before '_RMT_' in the first RMT filename
-    room_id = os.path.basename(rmt_files[0]).split('_RMT_')[0]
+    r_id = room_id if room_id else os.path.basename(rmt_files[0]).split('_RMT_')[0]
 
     def _read_files(file_list, col_name):
         dfs = []
@@ -927,6 +937,8 @@ def prepare_df_phase2(raw_data_path):
                 df.columns = ['DateTime', col_name]
                 df['DateTime'] = pd.to_datetime(df['DateTime'], dayfirst=True, errors='coerce')
                 df = df.dropna(subset=['DateTime'])
+                # Standardize DateTime index by rounding to nearest minute to eliminate seconds-drift
+                df['DateTime'] = df['DateTime'].dt.round('min')
                 df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
                 dfs.append(df[['DateTime', col_name]])
             except Exception as e:
@@ -951,7 +963,7 @@ def prepare_df_phase2(raw_data_path):
     # Pressure optional
     if rdp_files:
         df_p = _read_files(rdp_files, 'Pressure')
-        df = pd.merge(df, df_p, on='DateTime', how='left')
+        df = pd.merge(df, df_p, on='DateTime', how='outer').sort_values('DateTime').reset_index(drop=True)
     else:
         df['Pressure'] = pd.NA
 
@@ -959,7 +971,7 @@ def prepare_df_phase2(raw_data_path):
     sensors = {'Temperature'}
     if rmh_files: sensors.add('Humidity')
     if rdp_files: sensors.add('Pressure')
-    return room_id, df, sensors
+    return r_id, df, sensors
 
 
 def scan_phase2_rooms(folder_path):
@@ -969,19 +981,28 @@ def scan_phase2_rooms(folder_path):
     room_map = {}
     for root, dirs, files in os.walk(folder_path):
         rmt_files = [f for f in files if '_RMT_' in f and f.lower().endswith('.csv')]
-        if rmt_files:
-            room_id = rmt_files[0].split('_RMT_')[0]
-            if room_id not in room_map:  # first occurrence wins
-                room_map[room_id] = root
+        for f in rmt_files:
+            room_id = f.split('_RMT_')[0]
+            if room_id not in room_map:
+                room_map[room_id] = folder_path
     return room_map
 
 
-def get_file_date_range_phase2(raw_data_path):
+def get_file_date_range_phase2(raw_data_path, room_id=None):
     """Get combined date range from all CSV files in a Phase 2 folder (any depth)."""
     all_dates = []
-    all_files = [f for f in _glob.glob(os.path.join(raw_data_path, '*.Csv')) +
-                             _glob.glob(os.path.join(raw_data_path, '*.csv'))
-                 if '_RMT_' in os.path.basename(f)]  # use only RMT to avoid duplicates
+    all_files = []
+    prefix = f"{room_id}_RMT_" if room_id else "_RMT_"
+    prefix_lower = prefix.lower()
+    for root, _, files in os.walk(raw_data_path):
+        for f in files:
+            if f.lower().endswith('.csv'):
+                if room_id:
+                    if f.lower().startswith(prefix_lower):
+                        all_files.append(os.path.join(root, f))
+                else:
+                    if '_rmt_' in f.lower():
+                        all_files.append(os.path.join(root, f))
     for f in all_files:
         try:
             df = pd.read_csv(f, sep=';', skiprows=4, header=0,
@@ -1031,12 +1052,17 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
             if setpoint_df[setpoint_df['Room_number'].astype(str) == room_id].empty:
                 continue
             try:
-                _, df, sensors = prepare_df_phase2(raw_data_path)
+                _, df, sensors = prepare_df_phase2(raw_data_path, room_id=room_id)
                 room_full_dfs[room_id] = df
                 room_sensors[room_id]  = sensors
-                f_hash = get_file_hash(os.path.join(raw_data_path,
-                    (_glob.glob(os.path.join(raw_data_path, '*_RMT_*.Csv')) +
-                     _glob.glob(os.path.join(raw_data_path, '*_RMT_*.csv')))[0]))
+                prefix = f"{room_id}_"
+                rmt_files = []
+                for root, _, files in os.walk(raw_data_path):
+                    for f in files:
+                        if f.lower().startswith(f"{room_id.lower()}_rmt_") and f.lower().endswith('.csv'):
+                            rmt_files.append(os.path.join(root, f))
+                rmt_files = sorted(rmt_files)
+                f_hash = get_file_hash(rmt_files[0])
                 audit_trail.log_event("FILE_PROCESSED", f"[Phase2] Room: {room_id} | SHA256: {f_hash}")
             except Exception as e:
                 error_msg = f"FILE ERROR [{room_id}]: {str(e)}"

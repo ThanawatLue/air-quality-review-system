@@ -503,8 +503,8 @@ def get_file_info():
             if not room_scan:
                 return jsonify({'error': 'No valid Phase 2 room folders found.'}), 400
             all_dates = []
-            for raw_data_path in room_scan.values():
-                s, e = get_file_date_range_phase2(raw_data_path)
+            for room_id, raw_data_path in room_scan.items():
+                s, e = get_file_date_range_phase2(raw_data_path, room_id=room_id)
                 if s: all_dates.append(s)
                 if e: all_dates.append(e)
             if not all_dates:
@@ -572,7 +572,7 @@ def get_rooms():
             room_scan = scan_phase2_rooms(folder_path)
             start_d, end_d = start_date.date(), end_date.date()
             for room_id, raw_data_path in room_scan.items():
-                f_start, f_end = get_file_date_range_phase2(raw_data_path)
+                f_start, f_end = get_file_date_range_phase2(raw_data_path, room_id=room_id)
                 if f_start and f_end and not (f_end < start_d or f_start > end_d):
                     available_room_nos_set.add(room_id)
         else:
@@ -680,6 +680,36 @@ def analyze():
         return jsonify({'job_id': job_id})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/job-status/<job_id>')
+def job_status(job_id):
+    """GAMP 5: Robust polling fallback. Prevents UI freeze in Waitress production mode
+    which natively buffers/caches standard Server-Sent Events (SSE).
+    """
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'Job not found'}), 404
+
+    lines = []
+    log_q = job['queue']
+    # Drain the queue to fetch new logs since last poll
+    while not log_q.empty():
+        try:
+            line = log_q.get_nowait()
+            if line is not None:
+                lines.append(line)
+        except Exception:
+            break
+
+    with _jobs_lock:
+        return jsonify({
+            'done': job['done'],
+            'error_msg': job['error'],
+            'response': job['response'],
+            'logs': lines
+        })
 
 
 @app.route('/stream/<job_id>')

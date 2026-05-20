@@ -339,10 +339,6 @@ document.getElementById('analyzeBtn').onclick = async () => {
     }
     requestAnimationFrame(_flushLog);
 
-    const evtSource = new EventSource(`/stream/${jobId}`);
-
-    evtSource.onmessage = (e) => { _logBuf.push(e.data); };
-
     function _stopLog() {
         _logActive = false;
         if (_logBuf.length > 0) {
@@ -351,58 +347,72 @@ document.getElementById('analyzeBtn').onclick = async () => {
         }
     }
 
-    evtSource.addEventListener('done', (e) => {
-        evtSource.close();
-        _stopLog();
-        const result = JSON.parse(e.data);
-        if (result.warning) {
-            msg.innerText = result.warning;
-            msg.style.color = '#f59e0b';
-            document.getElementById('statusIcon').style.background = '#f59e0b';
-        } else {
-            msg.innerText = 'AQR Program: Analysis Successful!';
-            msg.style.color = '';
-            document.getElementById('statusIcon').style.background = '#10b981';
+    const pollInterval = setInterval(async () => {
+        try {
+            const res = await fetch(`/job-status/${jobId}`);
+            const data = await res.json();
+
+            if (data.error) {
+                clearInterval(pollInterval);
+                _stopLog();
+                showErrorModal('Analysis Error', 'ERR-UNKNOWN', data.error);
+                return;
+            }
+
+            // GAMP 5: Feed incoming logs to real-time UI terminal buffer
+            if (data.logs && data.logs.length > 0) {
+                data.logs.forEach(line => _logBuf.push(line));
+            }
+
+            if (data.done) {
+                clearInterval(pollInterval);
+                _stopLog();
+
+                if (data.error_msg) {
+                    msg.innerHTML = `<span style="color:#ef4444">AQR Program: Analysis Failed</span>`;
+                    document.getElementById('statusIcon').style.background = '#ef4444';
+                    const errMsg = data.error_msg;
+                    if (errMsg.includes('ERR-001'))      showErrorModal('Header Missing Error',         'ERR-001', errMsg);
+                    else if (errMsg.includes('ERR-002')) showErrorModal('Limit File Error',              'ERR-002', errMsg);
+                    else if (errMsg.includes('ERR-003')) showErrorModal('Invalid Configuration Error',   'ERR-003', errMsg);
+                    else if (errMsg.includes('ERR-005')) showErrorModal('Invalid File Format',           'ERR-005', errMsg);
+                    else if (errMsg.includes('ERR-006')) showErrorModal('Logical Constraint Error',      'ERR-006', errMsg);
+                    else                                 showErrorModal('Analysis Error',                'ERR-UNKNOWN', errMsg);
+                } else {
+                    const result = data.response || {};
+                    if (result.warning) {
+                        msg.innerText = result.warning;
+                        msg.style.color = '#f59e0b';
+                        document.getElementById('statusIcon').style.background = '#f59e0b';
+                    } else {
+                        msg.innerText = 'AQR Program: Analysis Successful!';
+                        msg.style.color = '';
+                        document.getElementById('statusIcon').style.background = '#10b981';
+                    }
+                    document.getElementById('resultLinks').innerHTML =
+                        `<a href="/download/${result.filename}" class="btn-glow-primary" style="text-decoration:none;">Download AQR Program Report</a>`;
+                    currentJobId = jobId;
+                    setPlotBtnEnabled(true);
+
+                    // Show stats bar
+                    const statsBar = document.getElementById('analysisStatsBar');
+                    const stats = result.stats || {};
+                    if (stats.total !== undefined) {
+                        statsBar.innerHTML =
+                            `<div class="stat-item total"><div class="stat-value">${stats.total}</div><div class="stat-label">Total Rooms</div></div>` +
+                            `<div class="stat-item passed"><div class="stat-value">${stats.passed}</div><div class="stat-label">Passed</div></div>` +
+                            `<div class="stat-item violation"><div class="stat-value">${stats.violations}</div><div class="stat-label">Out of Spec</div></div>` +
+                            `<div class="stat-item error"><div class="stat-value">${stats.errors}</div><div class="stat-label">Errors</div></div>`;
+                        statsBar.style.display = 'flex';
+                    }
+                }
+            }
+        } catch (e) {
+            clearInterval(pollInterval);
+            _stopLog();
+            showErrorModal('Connection Error', 'ERR-UNKNOWN', 'Lost connection to server during analysis.');
         }
-        document.getElementById('resultLinks').innerHTML =
-            `<a href="/download/${result.filename}" class="btn-glow-primary" style="text-decoration:none;">Download AQR Program Report</a>`;
-        currentJobId = jobId;
-        setPlotBtnEnabled(true);
-
-        // Show stats bar
-        const statsBar = document.getElementById('analysisStatsBar');
-        const stats = result.stats || {};
-        if (stats.total !== undefined) {
-            statsBar.innerHTML =
-                `<div class="stat-item total"><div class="stat-value">${stats.total}</div><div class="stat-label">Total Rooms</div></div>` +
-                `<div class="stat-item passed"><div class="stat-value">${stats.passed}</div><div class="stat-label">Passed</div></div>` +
-                `<div class="stat-item violation"><div class="stat-value">${stats.violations}</div><div class="stat-label">Out of Spec</div></div>` +
-                `<div class="stat-item error"><div class="stat-value">${stats.errors}</div><div class="stat-label">Errors</div></div>`;
-            statsBar.style.display = 'flex';
-        }
-    });
-
-    evtSource.addEventListener('error_event', (e) => {
-        evtSource.close();
-        _stopLog();
-        const errData = JSON.parse(e.data);
-        const errMsg = errData.error || 'Analysis failed.';
-        msg.innerHTML = `<span style="color:#ef4444">AQR Program: Analysis Failed</span>`;
-        document.getElementById('statusIcon').style.background = '#ef4444';
-        if (errMsg.includes('ERR-001'))      showErrorModal('Header Missing Error',         'ERR-001', errMsg);
-        else if (errMsg.includes('ERR-002')) showErrorModal('Limit File Error',              'ERR-002', errMsg);
-        else if (errMsg.includes('ERR-003')) showErrorModal('Invalid Configuration Error',   'ERR-003', errMsg);
-        else if (errMsg.includes('ERR-005')) showErrorModal('Invalid File Format',           'ERR-005', errMsg);
-        else if (errMsg.includes('ERR-006')) showErrorModal('Logical Constraint Error',      'ERR-006', errMsg);
-        else                                 showErrorModal('Analysis Error',                'ERR-UNKNOWN', errMsg);
-    });
-
-    evtSource.onerror = () => {
-        if (evtSource.readyState === EventSource.CLOSED) return;
-        evtSource.close();
-        _stopLog();
-        showErrorModal('Connection Error', 'ERR-UNKNOWN', 'Lost connection to server during analysis.');
-    };
+    }, 500);
 };
 
 const commonRangeButtons = [
