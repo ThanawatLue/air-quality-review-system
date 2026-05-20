@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import analysis_logic; print\\('OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import analysis_logic; print\\('Syntax OK'\\)\")",
+      "Bash(python app.py)",
+      "Bash(curl -s http://127.0.0.1:5000/aqr)",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/analyze -H \"Content-Type: application/json\" -d \"{\\\\\"folder_path\\\\\":\\\\\"d:/ex_work/AirQualityReview_Project/data/C\\\\\",\\\\\"setpoint_path\\\\\":\\\\\"d:/ex_work/AirQualityReview_Project/data/SetPointLimit.xlsx\\\\\",\\\\\"selected_rooms\\\\\":[\\\\\"1-P040\\\\\"],\\\\\"start_date\\\\\":\\\\\"2026-01-04T00:00\\\\\",\\\\\"end_date\\\\\":\\\\\"2026-01-04T23:55\\\\\",\\\\\"source_mode\\\\\":\\\\\"phase1\\\\\"}\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('keys:', list\\(d.keys\\(\\)\\)\\); print\\('filename:', d.get\\('filename'\\)\\); print\\('plot_data rooms:', list\\(d.get\\('plot_data',{}\\).keys\\(\\)\\)\\); print\\('logs last 3:', d.get\\('logs',''\\)[-200:]\\)\")",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/analyze -H \"Content-Type: application/json\" -d \"{\\\\\"folder_path\\\\\":\\\\\"d:/ex_work/AirQualityReview_Project/data/phase2\\\\\",\\\\\"setpoint_path\\\\\":\\\\\"d:/ex_work/AirQualityReview_Project/data/SetPointLimit_Phase2.xlsx\\\\\",\\\\\"selected_rooms\\\\\":[\\\\\"10-1-096\\\\\",\\\\\"10-1-097\\\\\",\\\\\"10-1-080\\\\\"],\\\\\"start_date\\\\\":\\\\\"2026-05-12T00:00\\\\\",\\\\\"end_date\\\\\":\\\\\"2026-05-13T23:55\\\\\",\\\\\"source_mode\\\\\":\\\\\"phase2\\\\\"}\")",
+      "Bash(curl -s -X POST http://127.0.0.1:5000/analyze -H \"Content-Type: application/json\" -d \"{\\\\\"folder_path\\\\\":\\\\\"d:/ex_work/AirQualityReview_Project/data/C\\\\\",\\\\\"setpoint_path\\\\\":\\\\\"d:/ex_work/AirQualityReview_Project/data/SetPointLimit.xlsx\\\\\",\\\\\"selected_rooms\\\\\":[\\\\\"1-P038\\\\\",\\\\\"1-P040\\\\\"],\\\\\"start_date\\\\\":\\\\\"2026-01-04T00:00\\\\\",\\\\\"end_date\\\\\":\\\\\"2026-01-04T23:55\\\\\",\\\\\"source_mode\\\\\":\\\\\"phase1\\\\\"}\")",
+      "Bash(node --check \"d:/ex_work/AirQualityReview_Project/static/script.js\")"
+    ]
+  }
+}

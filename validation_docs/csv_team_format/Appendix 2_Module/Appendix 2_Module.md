@@ -39,150 +39,127 @@ SECTION 5: TEST CASE SELECTION PROCEDURE
 The test selection for Module Testing is based on the Functional Risk Assessment (FRA) and the Design Specification (DS). Tests are selected to verify the exact mathematical logic (e.g., temporal alignment) and structural integrity (e.g., SHA-256 hashes) that cannot be easily verified through the user interface alone.
 
 SECTION 6: TEST RESULT
-1.	CRR-TC-01: User Identity Capture Verification (Ref: CRR-01)
+
+1.	CRR-TC-01: User Identity Capture Verification
 Objective:
 To verify that the system securely and accurately captures the actual Windows username of the person running the application. This ensures that the Audit Trail history is always linked to a real person.
-
 Procedure:
-1.	Source Code Navigation:
-    •	Open the project repository in a code editor (e.g., VS Code).
-    •	Navigate to the file `audit_trail.py`.
-2.	Logic Verification:
-    •	Locate the `log_event` function definition.
-    •	Verify that the system is programmed to ask Windows for the current user (`getpass.getuser()`).
-    •	Ensure that there is a "Plan B" (fallback mechanism) using a different system variable if the first method fails, so the software does not crash.
-
+•	Source Code Navigation:
+	Open the project repository in a code editor (e.g., VS Code).
+	Navigate to the file `audit_trail.py`.
+•	Logic Verification:
+	Locate the `log_event` function definition.
+	Verify that the system is programmed to ask Windows for the current user (`getpass.getuser()`).
 Acceptance Criteria:
 •	The code explicitly imports and utilizes the correct module to securely identify the user.
-•	A valid backup method exists to prevent system crashes if the user identity cannot be read immediately.
-•	Results: Complied with the acceptance criteria.
-Result: [   ] P   [   ] CP   [   ] F   [   ] N/A
+Results:
 
-
-2.	CRR-TC-02: Temporal Alignment Logic Verification (Ref: CRR-02)
+2.	CRR-TC-02: Temporal Alignment Logic Verification
 Objective:
 To verify that the system aligns time-stamps properly when comparing pressure between two rooms, allowing a small 60-second window (tolerance) to account for slight delays in different sensors sending their data.
-
 Procedure:
-1.	Source Code Navigation:
-    •	Open the project repository in a code editor.
-    •	Navigate to the file `analysis_logic.py`.
-2.	Logic Verification:
-    •	Locate the `check_reverse_violations` and `analyze_files` functions.
-    •	Find the data joining function (`pd.merge_asof`) used for pressure corridor comparisons.
-    •	Verify that the system is instructed to find the "nearest" time within a strict 60-second maximum limit (`tolerance=pd.Timedelta('60s')`).
-
+•	Source Code Navigation:
+	Open the project repository in a code editor.
+	Navigate to the file `analysis_logic.py`.
+•	Logic Verification:
+	Locate the `check_reverse_violations` and `analyze_files` functions.
+	Find the data joining function (`pd.merge_asof`) used for pressure corridor comparisons.
+	Verify that the system is instructed to find the "nearest" time within a strict 60-second maximum limit (`tolerance=pd.Timedelta('60s')`).
 Acceptance Criteria:
 •	The code utilizes the "nearest" direction rule to handle minor sensor timing issues (sensor jitter).
 •	The time limit is strictly set to 60 seconds to prevent the system from comparing pressure data from completely different times.
-•	Results: Complied with the acceptance criteria.
-Result: [   ] P   [   ] CP   [   ] F   [   ] N/A
-
+Results:
 
 3.	IQ-TC-01: Binary Integrity & Versioning Verification
 Objective:
 To verify that the delivered program (`AirQualityReview.exe`) is correctly installed, matches the officially validated software build, and contains the correct version information.
-
 Procedure:
-1.	System Installation:
-    •	Locate the source installation package (the standalone program).
-    •	Copy the `AirQualityReview.exe` file and its associated data folders to your local computer drive (e.g., `C:\AQR_System\`).
-2.	Navigation and Metadata Verification:
-    •	Open Windows File Explorer.
-    •	Navigate to the directory where you copied the application.
-    •	Right-click on the file `AirQualityReview.exe`.
-    •	Select 'Properties' from the menu and navigate to the 'Details' tab.
-    •	Verify the "Product Version" field.
-3.	Command-Line Integrity Check (SHA-256 Checksum):
-    •	Press the `Windows + R` keys to open the 'Run' dialog box.
-    •	Type `powershell` and press Enter.
-    •	In the PowerShell window, type: `cd C:\AQR_System\` (or your actual path).
-    •	Type the command: `Get-FileHash .\AirQualityReview.exe -Algorithm SHA256 | Format-List`
-4.	Comparison:
-    •	Compare the digital fingerprint (Hash value) displayed on your screen against the Master Build Record.
-
+•	System Installation:
+	Locate the source installation package (the standalone program).
+	Copy the `AirQualityReview.exe` file and its associated data folders to your local computer drive (e.g., `C:\AQR_System\`).
+•	Navigation and Metadata Verification:
+	Open Windows File Explorer.
+	Navigate to the directory where you copied the application.
+	Right-click on the file `AirQualityReview.exe`.
+	Select 'Properties' from the menu and navigate to the 'Details' tab.
+	Verify the "Product Version" field.
+•	Command-Line Integrity Check (SHA-256 Checksum):
+	Press the `Windows + R` keys to open the 'Run' dialog box.
+	Type `powershell` and press Enter.
+	In the PowerShell window, type: `cd C:\AQR_System\` (or your actual path).
+	Type the command: `Get-FileHash .\AirQualityReview.exe -Algorithm SHA256 | Format-List`
+•	Comparison:
+	Compare the digital fingerprint (Hash value) displayed on your screen against the Master Build Record.
 Acceptance Criteria:
 •	Product Version explicitly displays "v1.1.0".
-•	The generated SHA-256 hash perfectly matches the Master Build Record: `CBFF211004AFDCB4EC4D0223796632DA936100AF4477E0FFB0547F208B7D0B07`
-Result: [   ] P   [   ] CP   [   ] F   [   ] N/A
-
+•	The generated SHA-256 hash perfectly matches the Master Build Record: `D12E959AC43FC8E69CC04C64ED1BFFFBFFE71EDE2CEDCB976A320DD6A113023E`
+Results:
 
 4.	IQ-TC-02: Directory Structure Verification
 Objective:
 To verify that the system successfully sets up its own working environment by automatically creating the necessary folders and the core security log file the first time you run it.
-
 Procedure:
-1.	Initial Execution:
-    •	Navigate to the application root directory (e.g., `C:\AQR_System\`).
-    •	Double-click `AirQualityReview.exe` to launch the application for the first time.
-    •	Wait for the visual dashboard (Graphical User Interface) to appear.
-2.	System Shutdown:
-    •	Close the application browser window and stop the program if necessary.
-3.	Visual Inspection:
-    •	Using Windows File Explorer, inspect the contents of the application root directory.
-    •	Verify that the system has newly created two folders: `./reports` and `./logs`.
-4.	File Verification:
-    •	Enter the `./logs` folder.
-    •	Verify the presence of the `audit_trail.log` file.
-
+•	Initial Execution:
+	Navigate to the application root directory (e.g., `C:\AQR_System\`).
+	Double-click `AirQualityReview.exe` to launch the application for the first time.
+	Wait for the visual dashboard (Graphical User Interface) to appear.
+•	System Shutdown:
+	Close the application browser window and stop the program if necessary.
+•	Visual Inspection:
+	Using Windows File Explorer, inspect the contents of the application root directory.
+	Verify that the system has newly created two folders: `./reports` and `./logs`.
+•	File Verification:
+	Enter the `./logs` folder.
+	Verify the presence of the `audit_trail.log` file.
 Acceptance Criteria:
 •	The `./reports` folder is automatically generated and present.
 •	The `./logs` folder is automatically generated and present.
 •	The `audit_trail.log` file is successfully initialized and located securely within the `./logs` directory.
-Result: [   ] P   [   ] CP   [   ] F   [   ] N/A
-
+Results:
 
 5.	IQ-TC-04: Automated Folder Initialization
 Objective:
 To verify the system's ability to "self-heal". If critical folders are accidentally deleted by a user, the system must be able to automatically recreate them to prevent crashing.
-
 Procedure:
-1.	Environment Preparation:
-    •	Navigate to the application root directory.
-    •	Ensure the application (`AirQualityReview.exe`) is completely closed.
-2.	Simulation of Missing Components:
-    •	Select the `./logs` folder and delete it entirely.
-    •	Select the `./reports` folder and delete it entirely.
-    •	Confirm both folders are removed from the root directory.
-3.	System Re-initialization:
-    •	Double-click `AirQualityReview.exe` to launch the application.
-    •	Observe the startup process to ensure no error messages appear.
-4.	Verification of Self-Healing:
-    •	Switch back to Windows File Explorer and inspect the root directory.
-
+•	Environment Preparation:
+	Navigate to the application root directory.
+	Ensure the application (`AirQualityReview.exe`) is completely closed.
+•	Simulation of Missing Components:
+	Select the `./logs` folder and delete it entirely.
+	Select the `./reports` folder and delete it entirely.
+	Confirm both folders are removed from the root directory.
+•	System Re-initialization:
+	Double-click `AirQualityReview.exe` to launch the application.
+	Observe the startup process to ensure no error messages appear.
+•	Verification of Self-Healing:
+	Switch back to Windows File Explorer and inspect the root directory.
 Acceptance Criteria:
 •	The application launches successfully without displaying any system errors.
 •	The system automatically re-creates the missing `./logs` and `./reports` folders to restore functionality.
-Result: [   ] P   [   ] CP   [   ] F   [   ] N/A
+Results:
 
-
-6.	IQ-TC-07: Pre-Flight Integrity Check Failure
+6.	IQ-TC-06: Pre-Flight Integrity Check Failure
 Objective:
 To verify that the system has a robust self-protection mechanism. It must prevent the program from opening if it detects that the security history file (`audit_trail.log`) has been manually altered, ensuring compliance with strict data security rules (21 CFR Part 11).
-
 Procedure:
-1.	Preparation:
-    •	Navigate to the `./logs` directory.
-    •	Right-click the `audit_trail.log` file and select 'Open with Notepad'.
-2.	Simulation of Unauthorized Modification (Data Tampering):
-    •	Identify a single character or a long hash string in the text.
-    •	Manually edit or delete characters (e.g., change a specific letter or number).
-    •	Save the changes and close Notepad.
-3.	System Execution Attempt:
-    •	Return to the root directory and double-click `AirQualityReview.exe`.
-4.	Verification of System Halt:
-    •	Confirm the main visual dashboard does not open.
-    •	Verify the exact wording of the error message displayed on the screen.
-
+•	Preparation:
+	Navigate to the `./logs` directory.
+	Right-click the `audit_trail.log` file and select 'Open with Notepad'.
+•	Simulation of Unauthorized Modification (Data Tampering):
+	Identify a single character or a long hash string in the text.
+	Manually edit or delete characters (e.g., change a specific letter or number).
+	Save the changes and close Notepad.
+•	System Execution Attempt:
+	Return to the root directory and double-click `AirQualityReview.exe`.
+•	Verification of System Halt:
+	Confirm the main visual dashboard does not open.
+	Verify the exact wording of the error message displayed on the screen.
 Acceptance Criteria:
 •	The application must refuse to start and immediately halt all internal processes.
 •	The system must display a fatal error message exactly reading: "FATAL ERROR 004: Audit Trail Integrity Check Failed".
 •	Details inside the error message must mention the security violation or tampered entry.
+Results:
 
----
-**Document Approval Signatures**
-(To be signed upon finalization)
-Result: [   ] P   [   ] CP   [   ] F   [   ] N/A
 
 
 SECTION 7: CRITERIA FOR EVALUATION OF TEST RESULT

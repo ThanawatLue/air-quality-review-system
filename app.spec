@@ -1,24 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-# IQ-TC-01: Binary Integrity & Versioning Verification
-# Version information for Windows executable properties
-version_info = {
-    'version': '1.1.0',
-    'description': 'Air Quality Review System - GAMP 5 Compliant',
-    'company': 'AQR Program',
-    'product': 'Air Quality Review',
-    'file_version': '1.1.0.0',
-    'product_version': '1.1.0.0',
-    'copyright': '© 2026 AQR Program. All rights reserved.',
-    'trademark': '',
-}
 
 a = Analysis(
-    ['app.py'], # IQ-TC-06: Standalone Python Bundling
+    ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates'), ('static', 'static')],
-    hiddenimports=['waitress'],
+    datas=[('templates', 'templates'), ('static', 'static'), ('data', 'data')],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -34,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='AirQualityReview_1.1.0',
+    name='AQR_Dashboard_v1.1.0',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

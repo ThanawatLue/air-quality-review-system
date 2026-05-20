@@ -6,10 +6,15 @@ import audit_trail # GAMP 5: UR-DI-01 Secure Audit Trail
 import webbrowser
 import re
 import csv
+import threading
+import queue as _queue
+import uuid
 from threading import Timer
 import tkinter as tk
 from tkinter import filedialog
-from analysis_logic import analyze_files, get_plot_info, find_point_mapping, get_file_hash, get_file_date_range, parse_filename_for_datetime
+from analysis_logic import (analyze_files, get_plot_info, find_point_mapping, get_file_hash,
+                            get_file_date_range, parse_filename_for_datetime,
+                            analyze_files_phase2, scan_phase2_rooms, get_file_date_range_phase2)
 import datetime
 import traceback
 import json
@@ -33,6 +38,20 @@ else:
     app = Flask(__name__)
     BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
+# GAMP 5: Automatic Static File Cache Busting (Versioning)
+# Appends ?v=<timestamp> to static files automatically so users never need to Ctrl+F5.
+@app.context_processor
+def override_url_for():
+    def dated_url_for(endpoint, **values):
+        if endpoint == 'static':
+            filename = values.get('filename', None)
+            if filename:
+                file_path = os.path.join(app.static_folder, filename)
+                if os.path.exists(file_path):
+                    values['v'] = int(os.stat(file_path).st_mtime)
+        return url_for(endpoint, **values)
+    return dict(url_for=dated_url_for)
+
 # GAMP 5: Reports directory setup
 REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
 if not os.path.exists(REPORTS_DIR):
@@ -42,6 +61,11 @@ if not os.path.exists(REPORTS_DIR):
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 if not os.path.exists(LOGS_DIR):
     os.makedirs(LOGS_DIR)
+
+# --- Job store for SSE streaming analysis ---
+_jobs = {}          # job_id -> { queue, done, response, plot, error }
+_jobs_lock = threading.Lock()
+_analysis_lock = threading.Lock()  # one analysis at a time (stdout redirect safety)
 
 # GAMP 5: UR-DI-01 Verify audit trail integrity on startup (IQ-TC-07)
 try:
@@ -469,21 +493,40 @@ def browse_file():
 def get_file_info():
     try:
         data = request.get_json()
-        folder_path = data.get('folder_path')
+        folder_path  = data.get('folder_path')
+        source_mode  = data.get('source_mode', 'phase1')
         if not folder_path or not os.path.isdir(folder_path):
             return jsonify({'error': 'Invalid folder path.'}), 400
 
+        if source_mode == 'phase2':
+            room_scan = scan_phase2_rooms(folder_path)
+            if not room_scan:
+                return jsonify({'error': 'No valid Phase 2 room folders found.'}), 400
+            all_dates = []
+            for raw_data_path in room_scan.values():
+                s, e = get_file_date_range_phase2(raw_data_path)
+                if s: all_dates.append(s)
+                if e: all_dates.append(e)
+            if not all_dates:
+                return jsonify({'error': 'No valid CSV data found in Phase 2 folders.'}), 400
+            earliest = min(all_dates)
+            latest   = max(all_dates)
+            return jsonify({
+                'earliest': earliest.isoformat(),
+                'latest':   latest.isoformat(),
+                'default_start_end': earliest.isoformat(),
+                'rooms': sorted(list(room_scan.keys()))
+            })
+
+        # --- Phase 1 (original logic) ---
         timestamps = []
         rooms = set()
-        # Recursive scan for CSV files
         for root, dirs, files in os.walk(folder_path):
             for filename in files:
                 if filename.lower().endswith(".csv"):
                     dt = _parse_filename_for_datetime(filename)
                     if dt:
                         timestamps.append(dt)
-                    
-                    # Extract room ID from filename (e.g., 1-P038_...)
                     parts = os.path.splitext(filename)[0].split('_')
                     if len(parts) >= 3:
                         room_id = '_'.join(parts[:-2])
@@ -492,10 +535,9 @@ def get_file_info():
         if not timestamps:
             return jsonify({'error': 'No valid CSV files found.'}), 400
 
-        # Sort and get absolute earliest
         sorted_ts = sorted(timestamps)
         earliest = sorted_ts[0]
-        latest = sorted_ts[-1]
+        latest   = sorted_ts[-1]
 
         return jsonify({
             'earliest': earliest.isoformat(),
@@ -511,47 +553,46 @@ def get_file_info():
 def get_rooms():
     try:
         data = request.get_json()
-        folder_path = data.get('folder_path')
-        setpoint_path = data.get('setpoint_path')
+        folder_path    = data.get('folder_path')
+        setpoint_path  = data.get('setpoint_path')
         start_date_str = data.get('start_date', '')
-        end_date_str = data.get('end_date', '')
+        end_date_str   = data.get('end_date', '')
+        source_mode    = data.get('source_mode', 'phase1')
 
         if not all([folder_path, setpoint_path, start_date_str, end_date_str]):
             return jsonify({'error': 'Required parameters missing.'}), 400
 
-        # Standardize dates using pandas (handle UTC 'Z' if present)
         start_date = pd.to_datetime(start_date_str).tz_localize(None)
-        end_date = pd.to_datetime(end_date_str).tz_localize(None)
-
+        end_date   = pd.to_datetime(end_date_str).tz_localize(None)
         setpoint_df = pd.read_excel(setpoint_path)
         has_area = 'AREA' in setpoint_df.columns
         available_room_nos_set = set()
 
-        # Scan files recursively to see which rooms have data in range
-        for root, dirs, files in os.walk(folder_path):
-            for filename in files:
-                if filename.lower().endswith(".csv"):
-                    f_path = os.path.join(root, filename)
-                    f_start, f_end = get_file_date_range(f_path)
-                    
-                    if not f_start:
-                        f_dt = parse_filename_for_datetime(filename)
-                        if f_dt: f_start = f_end = f_dt
-                    
-                    if f_start and f_end:
-                        # Standardize dates for comparison
-                        start_d = start_date.date()
-                        end_d = end_date.date()
-                        
-                        # Include room if file range [f_start, f_end] overlaps with [start_d, end_d]
-                        if not (f_end < start_d or f_start > end_d):
-                            base_name = os.path.splitext(filename)[0]
-                            # Room number is everything before the last two parts (_DATE_TIME)
-                            room_no_parts = base_name.split('_')[:-2]
-                            if room_no_parts:
-                                available_room_nos_set.add('_'.join(room_no_parts))
-        
-        # Filter rooms from Excel that actually have files
+        if source_mode == 'phase2':
+            room_scan = scan_phase2_rooms(folder_path)
+            start_d, end_d = start_date.date(), end_date.date()
+            for room_id, raw_data_path in room_scan.items():
+                f_start, f_end = get_file_date_range_phase2(raw_data_path)
+                if f_start and f_end and not (f_end < start_d or f_start > end_d):
+                    available_room_nos_set.add(room_id)
+        else:
+            # Scan files recursively to see which rooms have data in range
+            for root, dirs, files in os.walk(folder_path):
+                for filename in files:
+                    if filename.lower().endswith(".csv"):
+                        f_path = os.path.join(root, filename)
+                        f_start, f_end = get_file_date_range(f_path)
+                        if not f_start:
+                            f_dt = parse_filename_for_datetime(filename)
+                            if f_dt: f_start = f_end = f_dt
+                        if f_start and f_end:
+                            start_d, end_d = start_date.date(), end_date.date()
+                            if not (f_end < start_d or f_start > end_d):
+                                base_name = os.path.splitext(filename)[0]
+                                room_no_parts = base_name.split('_')[:-2]
+                                if room_no_parts:
+                                    available_room_nos_set.add('_'.join(room_no_parts))
+
         filtered_df = setpoint_df[setpoint_df['Room_number'].astype(str).isin(available_room_nos_set)]
         
         all_rooms = []
@@ -574,46 +615,121 @@ def get_rooms():
 def analyze():
     try:
         data = request.get_json()
-        # Delegate heavy lifting to analysis_logic.py
-        output_file_path, logs = analyze_files(
-            folder_path=data.get('folder_path'),
-            setpoint_path=data.get('setpoint_path'),
-            selected_rooms=data.get('selected_rooms'),
-            start_date=data.get('start_date'),
-            end_date=data.get('end_date')
-        )
-        if not output_file_path:
-            # Extract specific ERR code from logs for frontend popup
-            error_msg = 'Analysis failed. Check input data.'
-            if logs:
-                import re
-                # Find all occurrences and take the last one (the final exception message)
-                matches = re.findall(r'(ERR-\d{3}: [^\n\r\"\'\)]+)', logs)
-                if matches:
-                    error_msg = matches[-1].strip()
-            return jsonify({'error': error_msg, 'logs': logs}), 500
-        
-        return jsonify({'filename': os.path.basename(output_file_path), 'logs': logs})
+        source_mode    = data.get('source_mode', 'phase1')
+        folder_path    = data.get('folder_path')
+        setpoint_path  = data.get('setpoint_path')
+        selected_rooms = data.get('selected_rooms')
+        start_date     = data.get('start_date')
+        end_date       = data.get('end_date')
+
+        if not all([folder_path, setpoint_path, selected_rooms, start_date, end_date]):
+            return jsonify({'error': 'Missing required parameters.'}), 400
+
+        # Reject concurrent analysis attempts
+        if not _analysis_lock.acquire(blocking=False):
+            return jsonify({'error': 'Another analysis is already running. Please wait.'}), 429
+
+        job_id    = str(uuid.uuid4())[:8]
+        log_queue = _queue.Queue()
+
+        with _jobs_lock:
+            _jobs[job_id] = {'queue': log_queue, 'done': False, 'response': None, 'plot': None, 'error': None}
+
+        def _run():
+            try:
+                fn = analyze_files_phase2 if source_mode == 'phase2' else analyze_files
+                output_file_path, _logs, plot_result = fn(
+                    folder_path=folder_path,
+                    setpoint_path=setpoint_path,
+                    selected_rooms=selected_rooms,
+                    start_date=start_date,
+                    end_date=end_date,
+                    log_queue=log_queue
+                )
+                with _jobs_lock:
+                    if not output_file_path:
+                        error_msg = 'Analysis failed. Check input data.'
+                        if _logs:
+                            matches = re.findall(r'(ERR-\d{3}: [^\n\r\"\'\)]+)', _logs)
+                            if matches:
+                                error_msg = matches[-1].strip()
+                        _jobs[job_id]['error'] = error_msg
+                    else:
+                        has_warnings = "ERROR:" in (_logs or "")
+                        _jobs[job_id]['response'] = {
+                            'filename': os.path.basename(output_file_path),
+                            'warning': 'Some files or rooms had errors. Please check the log.' if has_warnings else None,
+                            'stats': plot_result.get('stats', {}) if (plot_result and 'error' not in plot_result) else {}
+                        }
+                        if plot_result and "error" not in plot_result:
+                            _jobs[job_id]['plot'] = {
+                                'plot_data':          plot_result.get('plot_data', {}),
+                                'summary':            plot_result.get('summary', []),
+                                'violation_intervals': plot_result.get('violation_intervals', [])
+                            }
+                    _jobs[job_id]['done'] = True
+            except Exception as e:
+                with _jobs_lock:
+                    _jobs[job_id]['error'] = str(e)
+                    _jobs[job_id]['done']  = True
+            finally:
+                log_queue.put(None)   # sentinel — tells SSE stream to close
+                _analysis_lock.release()
+
+        threading.Thread(target=_run, daemon=True).start()
+        return jsonify({'job_id': job_id})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/get-plot-data', methods=['POST'])
-def get_plot_data():
-    try:
-        data = request.get_json()
-        result = get_plot_info(
-            folder_path=data.get('folder_path'),
-            setpoint_path=data.get('setpoint_path'),
-            selected_rooms=data.get('selected_rooms'),
-            start_date=data.get('start_date'),
-            end_date=data.get('end_date'),
-            limits=data.get('limits')
-        )
-        if "error" in result:
-            return jsonify(result), 500
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+
+@app.route('/stream/<job_id>')
+def stream(job_id):
+    """SSE endpoint — streams log lines live, then sends a final 'done' or 'error_event'."""
+    def generate():
+        with _jobs_lock:
+            job = _jobs.get(job_id)
+        if not job:
+            yield "data: ERROR: Job not found\n\n"
+            return
+
+        log_q = job['queue']
+        while True:
+            try:
+                line = log_q.get(timeout=60)
+                if line is None:  # sentinel = analysis finished
+                    with _jobs_lock:
+                        job_state = _jobs.get(job_id, {})
+                    if job_state.get('error'):
+                        payload = json.dumps({'error': job_state['error']})
+                        yield f"event: error_event\ndata: {payload}\n\n"
+                    else:
+                        payload = json.dumps(job_state.get('response') or {})
+                        yield f"event: done\ndata: {payload}\n\n"
+                    break
+                # Escape any embedded newlines so each SSE message is on one data: line
+                safe_line = line.replace('\n', ' ')
+                yield f"data: {safe_line}\n\n"
+            except _queue.Empty:
+                yield ": keepalive\n\n"   # SSE comment keeps connection alive
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no', 'Connection': 'keep-alive'}
+    )
+
+
+@app.route('/plot/<job_id>')
+def get_plot(job_id):
+    """Lazy endpoint — returns chart data after analysis is complete."""
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if not job or not job.get('done'):
+        return jsonify({'error': 'Job not found or not yet complete.'}), 404
+    plot = job.get('plot')
+    if not plot:
+        return jsonify({'error': 'No chart data available for this job.'}), 404
+    return jsonify(plot)
 
 @app.route('/download/<path:filename>')
 def download(filename):
@@ -642,6 +758,6 @@ if __name__ == '__main__':
     if getattr(sys, 'frozen', False):
         # Auto-open browser in EXE mode
         Timer(1.5, open_browser).start()
-        serve(app, host='127.0.0.1', port=5000) # IQ-TC-06 Localhost Isolation
+        serve(app, host='127.0.0.1', port=5000, threads=8, channel_timeout=3600) # IQ-TC-06 Localhost Isolation
     else:
         app.run(debug=True)

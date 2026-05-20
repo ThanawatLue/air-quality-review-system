@@ -34,8 +34,8 @@
                     <ul class="nav-menu">
                         <li><a href="{{ url_for('aqr') }}"><i class="fas fa-chart-line"></i> Air Quality Review</a></li>
                         <li><a href="{{ url_for('transform') }}" class="active"><i class="fas fa-exchange-alt"></i> Data Transformation</a></li>
-                        <li><a href="#"><i class="fas fa-circle-info"></i> Information</a></li>
-                        <li><a href="#"><i class="fas fa-question-circle"></i> About</a></li>
+                        <li><a href="javascript:showInfoModal()"><i class="fas fa-circle-info"></i> Information</a></li>
+                        <li><a href="javascript:showAboutModal()"><i class="fas fa-question-circle"></i> About</a></li>
                         <li><a href="javascript:location.reload()" class="reset-link"><i class="fas fa-undo"></i> Reset Application</a></li>
                         <li><a href="javascript:shutdownApp()" class="close-link"><i class="fas fa-power-off"></i> Close Application</a></li>
                     </ul>
@@ -245,6 +245,88 @@
                 });
             }
         }
+
+        function showInfoModal() {
+            document.getElementById('infoModal').classList.add('active');
+        }
+
+        function closeInfoModal() {
+            document.getElementById('infoModal').classList.remove('active');
+        }
+
+        function showAboutModal() {
+            document.getElementById('aboutModal').classList.add('active');
+        }
+
+        function closeAboutModal() {
+            document.getElementById('aboutModal').classList.remove('active');
+        }
+    </script>
+
+    <!-- Information Modal Popup -->
+    <div id="infoModal" class="error-modal-overlay">
+        <div class="error-modal" style="max-width: 650px; width: 90%;">
+            <div class="error-modal-header" style="border-bottom: 1px solid var(--border); padding-bottom: 15px;">
+                <div class="error-modal-icon" style="background: #e0f2fe; color: #0284c7;">
+                    <i class="fas fa-info-circle"></i>
+                </div>
+                <h3 class="error-modal-title">AQR System Information</h3>
+            </div>
+            <div class="error-modal-message" style="margin-top: 15px; max-height: 400px; overflow-y: auto; text-align: left; padding-right: 5px;">
+                <h4 style="color: var(--accent); margin: 0 0 8px 0; font-size: 0.95rem; font-weight: 700;">1. Purpose & GxP Scope</h4>
+                <p style="margin: 0 0 15px 0; font-size: 0.85rem; line-height: 1.5;">
+                    The Air Quality Review (AQR) Dashboard is a cGMP-compliant computerized software system designed under GAMP 5 Category 5 guidelines. It automates the extraction, compliance review, and reporting of critical cleanroom environmental parameters (Temperature, Relative Humidity, Differential Pressure) captured from Building Automation Systems (BAS).
+                </p>
+
+                <h4 style="color: var(--accent); margin: 0 0 8px 0; font-size: 0.95rem; font-weight: 700;">2. Operational SOP & Workflows</h4>
+                <ol style="margin: 0 0 15px 0; padding-left: 20px; font-size: 0.85rem; line-height: 1.5;">
+                    <li style="margin-bottom: 8px;"><strong>Prepare CSV Files:</strong> If your BAS export is a combined log, navigate to the <em>Data Transformation</em> page and use the Report Splitter to split it into room-specific files.</li>
+                    <li style="margin-bottom: 8px;"><strong>Configure Directory Paths:</strong> Select the source mode (Phase I for primary facilities or Phase II for expanded operations). Select the split CSV directory path and the corresponding Excel setpoint/limits specification file.</li>
+                    <li style="margin-bottom: 8px;"><strong>Execute Quality Review:</strong> Run the analyzer to generate high-fidelity plots, heatmaps, and a summary breakdown of violation events (&gt; 20 min thresholds).</li>
+                    <li style="margin-bottom: 8px;"><strong>Fine-tune & Tweak Thresholds:</strong> Zoom, pan, or inspect specific room plots dynamically. Interactively test different High/Low limit setpoints in real-time in each plot's header.</li>
+                </ol>
+
+                <h4 style="color: var(--accent); margin: 0 0 8px 0; font-size: 0.95rem; font-weight: 700;">3. Temporal Boundary Standard</h4>
+                <p style="margin: 0 0 0 0; font-size: 0.85rem; line-height: 1.5;">
+                    In accordance with regulatory audit requirements and cleanroom logging conventions, file-level date boundaries are parsed strictly from the internal data timestamps to guarantee chronological integrity, mitigating external filename discrepancies.
+                </p>
+            </div>
+            <button class="error-modal-button" style="margin-top: 15px;" onclick="closeInfoModal()">Close</button>
+        </div>
+    </div>
+
+    <!-- About Modal Popup -->
+    <div id="aboutModal" class="error-modal-overlay">
+        <div class="error-modal" style="max-width: 550px; width: 90%;">
+            <div class="error-modal-header" style="border-bottom: 1px solid var(--border); padding-bottom: 15px;">
+                <div class="error-modal-icon" style="background: #d1fae5; color: #059669;">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <h3 class="error-modal-title">About AQR Program</h3>
+                <span class="error-modal-code" style="background: #d1fae5; color: #047857;">v1.1.0</span>
+            </div>
+            <div class="error-modal-message" style="margin-top: 15px; text-align: left;">
+                <div style="display: flex; flex-direction: column; gap: 12px; font-size: 0.85rem; line-height: 1.5;">
+                    <div>
+                        <strong>System Identity:</strong> Air Quality Review (AQR) Validation Dashboard
+                    </div>
+                    <div>
+                        <strong>Secure Cryptographic Audit Trail:</strong> The system implements a robust, tamper-evident cryptographic security log (GAMP 5 compliance). All transactions, reports, startup checks, and process failures are timestamped and signed using <strong>SHA-256</strong> hashing for absolute data integrity.
+                    </div>
+                    <div>
+                        <strong>WSGI Server Isolation:</strong> Served using <strong>Waitress WSGI production server</strong> to enforce standard security profiles, eliminating standard development server vulnerabilities.
+                    </div>
+                    <div>
+                        <strong>Automated Cache Buster:</strong> Powered by the AQR Hot-Reload Engine (v2.2) to dynamically update visual resources on client requests.
+                    </div>
+                    <div style="border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 5px; color: var(--text-muted); font-size: 0.8rem; text-align: center;">
+                        Developed by <strong>Thanawat Lueangwirot</strong>
+                    </div>
+                </div>
+            </div>
+            <button class="error-modal-button" style="margin-top: 15px; background: var(--success);" onclick="closeAboutModal()">Close</button>
+        </div>
+    </div>
     </script>
 </body>
 </html>
