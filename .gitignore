@@ -21,6 +21,9 @@ dist/
 *.swp
 *.swo
 
+# Data directory (generated at runtime)
+data/
+
 # Reports directory (generated at runtime)
 reports/
 
