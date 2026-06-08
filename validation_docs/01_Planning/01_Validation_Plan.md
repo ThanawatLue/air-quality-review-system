@@ -27,11 +27,11 @@ SECTION 2: SYSTEM DESCRIPTION AND BOUNDARIES
 2.1 System Architecture & Delivery
 The system is built using modern programming tools (Python for the core logic, Pandas for data processing, and Flask for the user interface). 
 
-To make it easy for users, the system is packaged and delivered as a "Standalone Executable" (`app.exe`). This means the entire application is bundled into a single file that can run on any Windows computer immediately. Users do not need to install Python or any other programming tools. This approach also prevents accidental changes to the software's internal code, ensuring a secure and controlled environment.
+To make it easy for users, the system is packaged and delivered as a "Standalone Executable" (`AQR_Dashboard_v1.1.0.exe`). This means the entire application is bundled into a single file that can run on any Windows computer immediately. Users do not need to install Python or any other programming tools. This approach also prevents accidental changes to the software's internal code, ensuring a secure and controlled environment.
 
 2.2 System Boundaries
 •	Inbound Boundary: The system's starting point is reading the raw CSV data files (recorded every 5 minutes) that are exported from the BAS system. (Note: Validating the BAS system itself is out-of-scope for this project).
-•	System Boundary: This covers the execution of the `app.exe` file, which includes all the hidden calculation logic, the user interface on the screen, and the data splitting features.
+•	System Boundary: This covers the execution of the `AQR_Dashboard_v1.1.0.exe` file, which includes all the hidden calculation logic, the user interface on the screen, and the data splitting features.
 •	Outbound Boundary: The system's endpoint is generating the final Excel summary report and securely saving a tamper-proof history log (`audit_trail.log`).
 
 SECTION 3: SCOPE OF VALIDATION
@@ -41,7 +41,7 @@ The following components are within the scope of this validation plan:
 •	Application Logic: All data processing, removing duplicate data rows, mapping data columns to specific rooms, and calculating the 25-minute violation rule.
 •	Data Gap Continuity: The system's ability to calculate time gaps correctly, allowing a maximum of 10 minutes between records before it resets the violation counter.
 •	Data Integrity & Security: The system's security features, including the tamper-evident "Hash-chained" Audit Trails (a secure logging method similar to blockchain), the digital fingerprinting (SHA-256 hashing) of source CSV files, and tracking changes to the Limit File (`SetPointLimit.xlsx`).
-•	Deployment Integrity: Proving that the `app.exe` file can be reliably generated and that it correctly finds its internal files when running on a user's computer.
+•	Deployment Integrity: Proving that the `AQR_Dashboard_v1.1.0.exe` file can be reliably generated and that it correctly finds its internal files when running on a user's computer.
 
 3.2 Out-of-Scope Components
 •	Validation of the physical environmental sensors located in the facility.

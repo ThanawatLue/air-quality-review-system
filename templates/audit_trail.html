@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audit Trail | AQR Program GAMP 5 Compliance Log</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.1.2">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        /* Modern table and filter styles custom to audit trail */
+        .filter-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 15px;
+        }
+        .filter-tab {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: var(--main-bg);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+        .filter-tab:hover {
+            color: var(--text-main);
+            border-color: var(--text-muted);
+        }
+        .filter-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+            box-shadow: 0 4px 12px var(--accent-glow);
+        }
+        .audit-table-wrapper {
+            margin-top: 15px;
+            overflow-x: auto;
+            max-height: 600px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: var(--card-bg);
+        }
+        .audit-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 0.92rem;
+            text-align: left;
+        }
+        .audit-table th {
+            background: var(--card-bg);
+            padding: 14px 16px;
+            font-weight: 700;
+            color: var(--text-main);
+            border-bottom: 2px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .audit-table td {
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            color: var(--text-main);
+            vertical-align: top;
+        }
+        .audit-table tr:hover {
+            background: var(--main-bg);
+            cursor: pointer;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-success { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25); }
+        .badge-info { background: rgba(79, 70, 229, 0.15); color: #4f46e5; border: 1px solid rgba(79, 70, 229, 0.25); }
+        .badge-warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.25); }
+        .badge-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25); }
+        .hash-detail-box {
+            margin-top: 8px;
+            padding: 12px;
+            border-radius: 8px;
+            background: var(--main-bg);
+            border: 1px solid var(--border);
+            font-family: var(--font-data);
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            word-break: break-all;
+            display: none;
+        }
+        .hash-detail-box span {
+            font-weight: 700;
+            color: var(--text-main);
+        }
+        .integrity-card {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 30px;
+            border-radius: var(--radius);
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            margin-bottom: 25px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .integrity-status-pill {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        .integrity-status-pill.success {
+            background: rgba(46, 204, 113, 0.15);
+            color: #2ecc71;
+            border: 1px solid rgba(46, 204, 113, 0.3);
+        }
+        .integrity-status-pill.error {
+            background: rgba(231, 76, 60, 0.15);
+            color: #e74c3c;
+            border: 1px solid rgba(231, 76, 60, 0.3);
+        }
+    </style>
+</head>
+<body class="sidebar-collapsed">
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="spinner-container">
+            <div class="modern-spinner"></div>
+            <p id="loadingText">Verifying cryptographic hash chain...</p>
+        </div>
+    </div>
+
+    <!-- Global Toggle -->
+    <div class="sidebar-toggle-btn" id="sidebarToggle" title="Toggle Sidebar">
+        <i class="fas fa-chevron-left"></i>
+    </div>
+
+    <div class="app-wrapper">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">AQR <span>Dashboard</span></div>
+                <div style="font-size: 0.75rem; color: #888; margin-top: 5px;">Version 1.1.0</div>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h3>MAIN MENU</h3>
+                    <ul class="nav-menu">
+                        <li><a href="{{ url_for('aqr') }}"><i class="fas fa-chart-line"></i> Air Quality Review</a></li>
+                        <li><a href="{{ url_for('transform') }}"><i class="fas fa-exchange-alt"></i> Data Transformation</a></li>
+                        <li><a href="{{ url_for('audit_trail_view') }}" class="active"><i class="fas fa-file-shield"></i> Audit Trail</a></li>
+                        <li><a href="javascript:showInfoModal()"><i class="fas fa-circle-info"></i> Information</a></li>
+                        <li><a href="javascript:showAboutModal()"><i class="fas fa-question-circle"></i> About</a></li>
+                        <li><a href="javascript:location.reload()" class="reset-link"><i class="fas fa-undo"></i> Reset Application</a></li>
+                        <li><a href="javascript:shutdownApp()" class="close-link"><i class="fas fa-power-off"></i> Close Application</a></li>
+                    </ul>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <div class="breadcrumb">Modules / GAMP 5 Audit Trail</div>
+                <div style="display: flex; align-items: center; gap: 20px;">
+                    <button id="darkModeToggle" class="btn-browse" style="width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 12px;" title="Toggle Dark Mode">
+                        <i class="fas fa-moon"></i>
+                    </button>
+                    <div class="status-pill success">AQR Program Online</div>
+                </div>
+            </header>
+
+            <div class="content-container">
+                <!-- Cryptographic Integrity Panel -->
+                <div class="integrity-card animate-in">
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <h3 style="font-size: 1.1rem; font-weight: 700; color: var(--text-main); margin: 0;">Cryptographic Hash-Chain Verification</h3>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0;">GxP regulation mandates append-only logging. Recalculate and verify chain signatures dynamically.</p>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <div id="integrityPill" class="integrity-status-pill success">
+                            <i class="fas fa-shield-halved"></i>
+                            <span id="integrityText">Secure & Verified</span>
+                        </div>
+                        <button onclick="verifyIntegrity()" class="btn-glow-primary" style="height: 42px; padding: 0 20px; font-size: 0.9rem; font-weight: 700;">
+                            <i class="fas fa-arrows-rotate"></i> Verify Trail Integrity
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Main Logging Card -->
+                <section class="card animate-in mt-20">
+                    <div class="card-header">
+                        <h2>Regulatory Activity Log</h2>
+                        <div style="display: flex; align-items: center; gap: 15px; width: 40%; max-width: 400px;">
+                            <div class="full-path-input" style="width: 100%;">
+                                <input type="text" id="logSearch" placeholder="Search logs by keyword or room..." class="mini-search" style="height: 40px; font-size: 0.9rem; padding-left: 12px; margin-bottom: 0;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Filter Tabs -->
+                    <div class="filter-tabs">
+                        <div onclick="setFilter('all')" class="filter-tab active" id="tab-all">All Events</div>
+                        <div onclick="setFilter('user')" class="filter-tab" id="tab-user">User Actions</div>
+                        <div onclick="setFilter('alarm')" class="filter-tab" id="tab-alarm">Alarms & Security</div>
+                        <div onclick="setFilter('files')" class="filter-tab" id="tab-files">File Processing</div>
+                    </div>
+
+                    <div class="aqr-helper">
+                        <i class="fas fa-circle-info"></i>
+                        <span>Click any log row below to expand and view the cryptographically linked SHA-256 signatures.</span>
+                    </div>
+
+                    <!-- Table Wrapper -->
+                    <div class="audit-table-wrapper">
+                        <table class="audit-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 180px;">Timestamp</th>
+                                    <th style="width: 120px;">Operator</th>
+                                    <th style="width: 200px;">Action Event</th>
+                                    <th>Description / Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logTableBody">
+                                <!-- Dynamic lines inject here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <!-- About & Info modals (mirrors aqr.html) -->
+    <div id="aboutModal" class="modal-backdrop">
+        <div class="modal-card animate-in">
+            <div class="modal-header">
+                <h2>About AQR Program</h2>
+                <button class="modal-close" onclick="closeAboutModal()">&times;</button>
+            </div>
+            <p><strong>Air Quality Review (AQR) System</strong> is designed for high-integrity environmental review (GAMP 5 Category 4/5).</p>
+            <p>Version: 1.1.0 (Waitress Production WSGI Server)</p>
+            <button class="btn-glow-primary mt-20" onclick="closeAboutModal()">Close</button>
+        </div>
+    </div>
+
+    <div id="infoModal" class="modal-backdrop">
+        <div class="modal-card animate-in" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2>AQR User Guidance</h2>
+                <button class="modal-close" onclick="closeInfoModal()">&times;</button>
+            </div>
+            <div style="font-size: 0.95rem; line-height: 1.5; color: var(--text-muted);">
+                <p>This module provides an interactive view of the GAMP 5 compliant secure audit log.</p>
+                <ul style="padding-left: 20px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                    <li><strong>Tamper-Evident Chain:</strong> Each event entry calculates a SHA-256 hash linked to the previous row's hash.</li>
+                    <li><strong>Immediate Verification:</strong> Run "Verify Trail Integrity" to check for database corruption or tampering.</li>
+                    <li><strong>Real-time Filtering:</strong> Search for room names, error codes (like `ERR-010`), or actions instantly.</li>
+                </ul>
+            </div>
+            <button class="btn-glow-primary mt-20" onclick="closeInfoModal()">Close</button>
+        </div>
+    </div>
+
+    <script>
+        let rawLogs = [];
+        let activeFilter = 'all';
+
+        // Initialize theme
+        const currentTheme = localStorage.getItem('theme') || 'dark';
+        document.body.setAttribute('data-theme', currentTheme);
+        const toggleBtn = document.getElementById('darkModeToggle');
+        if (toggleBtn) {
+            toggleBtn.innerHTML = currentTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            toggleBtn.addEventListener('click', () => {
+                const isDark = document.body.getAttribute('data-theme') === 'dark';
+                const newTheme = isDark ? 'light' : 'dark';
+                document.body.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                toggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            });
+        }
+
+        // Sidebar Toggle
+        document.getElementById('sidebarToggle').addEventListener('click', () => {
+            document.body.classList.toggle('sidebar-collapsed');
+        });
+
+        // About/Info Modals
+        function showAboutModal() { document.getElementById('aboutModal').classList.add('active'); }
+        function closeAboutModal() { document.getElementById('aboutModal').classList.remove('active'); }
+        function showInfoModal() { document.getElementById('infoModal').classList.add('active'); }
+        function closeInfoModal() { document.getElementById('infoModal').classList.remove('active'); }
+        function shutdownApp() {
+            if(confirm("Confirm shutdown of GxP Server?")) {
+                fetch('/shutdown').then(() => { alert("Server terminated. Please close window."); window.close(); });
+            }
+        }
+
+        // Fetch logs on load
+        async function loadLogs() {
+            try {
+                showLoading(true, "Loading GxP audit records...");
+                const res = await fetch('/audit-logs');
+                rawLogs = await res.json();
+                renderLogs();
+            } catch (err) {
+                console.error("Failed to load logs:", err);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function showLoading(show, text = "") {
+            const el = document.getElementById('loadingOverlay');
+            if (el) {
+                document.getElementById('loadingText').innerText = text || "Processing...";
+                if (show) el.classList.add('active');
+                else el.classList.remove('active');
+            }
+        }
+
+        function setFilter(filter) {
+            activeFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach(tab => tab.classList.remove('active'));
+            document.getElementById(`tab-${filter}`).classList.add('active');
+            renderLogs();
+        }
+
+        // Filter & Render logic
+        function renderLogs() {
+            const search = document.getElementById('logSearch').value.toLowerCase();
+            const body = document.getElementById('logTableBody');
+            body.innerHTML = '';
+
+            const filtered = rawLogs.filter(log => {
+                // 1. Filter by tab
+                if (activeFilter === 'user') {
+                    if (!['APPLICATION_START', 'ANALYSIS_START', 'ANALYSIS_SUCCESS', 'AUDIT_VERIFIED'].includes(log.action)) return false;
+                } else if (activeFilter === 'alarm') {
+                    if (!['ALARM_TRIGGERED', 'ANALYSIS_FAILED', 'ROOM_ERROR', 'FILE_ERROR', 'AUDIT_TAMPERED', 'DUPLICATE_TIMESTAMPS_WARN'].includes(log.action)) return false;
+                } else if (activeFilter === 'files') {
+                    if (!['FILE_PROCESSED', 'WARNING'].includes(log.action)) return false;
+                }
+
+                // 2. Search keyword
+                const term = (log.timestamp + ' ' + log.user + ' ' + log.action + ' ' + log.details).toLowerCase();
+                return term.includes(search);
+            });
+
+            if (filtered.length === 0) {
+                body.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 30px; color:#888;">No audit trail events found matching criteria.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach((log, index) => {
+                const tr = document.createElement('tr');
+                tr.onclick = () => toggleHashBox(index);
+
+                // Badge style
+                let badgeClass = 'badge-info';
+                if (['ALARM_TRIGGERED', 'ROOM_ERROR', 'FILE_ERROR', 'ANALYSIS_FAILED', 'AUDIT_TAMPERED'].includes(log.action)) {
+                    badgeClass = 'badge-danger';
+                } else if (['ANALYSIS_SUCCESS', 'AUDIT_VERIFIED'].includes(log.action)) {
+                    badgeClass = 'badge-success';
+                } else if (['DUPLICATE_TIMESTAMPS_WARN', 'WARNING', 'ROOM_SKIPPED_ERROR'].includes(log.action)) {
+                    badgeClass = 'badge-warning';
+                }
+
+                tr.innerHTML = `
+                    <td style="font-family:'JetBrains Mono', monospace; font-size:0.88rem;">${log.timestamp}</td>
+                    <td style="font-weight:600; color: var(--text-main);">${log.user}</td>
+                    <td><span class="badge ${badgeClass}">${log.action}</span></td>
+                    <td>
+                        <div style="font-weight:500;">${log.details || 'N/A'}</div>
+                        <div id="hashBox-${index}" class="hash-detail-box">
+                            <div><span>Prev Hash:</span> ${log.prev_hash}</div>
+                            <div style="margin-top:4px;"><span>Entry Hash:</span> ${log.entry_hash}</div>
+                        </div>
+                    </td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        function toggleHashBox(index) {
+            const el = document.getElementById(`hashBox-${index}`);
+            if (el) {
+                const visible = el.style.display === 'block';
+                el.style.display = visible ? 'none' : 'block';
+            }
+        }
+
+        // Run cryptographic verification
+        async function verifyIntegrity() {
+            try {
+                showLoading(true, "Executing pre-flight hash chain analysis...");
+                const res = await fetch('/verify-audit-trail', { method: 'POST' });
+                const data = await res.json();
+                
+                const pill = document.getElementById('integrityPill');
+                const text = document.getElementById('integrityText');
+
+                if (data.success) {
+                    pill.className = 'integrity-status-pill success';
+                    text.innerText = 'Secure & Verified';
+                    alert("Verification SUCCESS:\n" + data.message);
+                } else {
+                    pill.className = 'integrity-status-pill error';
+                    text.innerText = 'Tampering Detected';
+                    alert("Verification FAILURE:\n" + data.message + "\n\nPlease restore backup immediately.");
+                }
+                loadLogs(); // Reload logs to capture AUDIT_VERIFIED event
+            } catch (err) {
+                console.error("Verification failed:", err);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Register search triggers
+        document.getElementById('logSearch').addEventListener('input', renderLogs);
+
+        // Load logs initially
+        loadLogs();
+    </script>
+</body>
+</html>

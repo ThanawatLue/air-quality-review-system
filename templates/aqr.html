@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AQR Dashboard | AQR Program Air Quality Review</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.1.2">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" charset="utf-8"></script>
@@ -36,6 +36,7 @@
                     <ul class="nav-menu">
                         <li><a href="{{ url_for('aqr') }}" class="active"><i class="fas fa-chart-line"></i> Air Quality Review</a></li>
                         <li><a href="{{ url_for('transform') }}"><i class="fas fa-exchange-alt"></i> Data Transformation</a></li>
+                        <li><a href="{{ url_for('audit_trail_view') }}"><i class="fas fa-file-shield"></i> Audit Trail</a></li>
                         <li><a href="javascript:showInfoModal()"><i class="fas fa-circle-info"></i> Information</a></li>
                         <li><a href="javascript:showAboutModal()"><i class="fas fa-question-circle"></i> About</a></li>
                         <li><a href="javascript:location.reload()" class="reset-link"><i class="fas fa-undo"></i> Reset Application</a></li>
@@ -76,8 +77,8 @@
                         <div class="input-row">
                             <label>Data Source</label>
                             <div style="display:flex; gap:12px;">
-                                <button id="modePhase1Btn" onclick="setSourceMode('phase1')" class="btn-browse" style="flex:1; height:52px; font-size:1.1rem; font-weight:700; background:var(--accent); color:#fff;">Phase I</button>
-                                <button id="modePhase2Btn" onclick="setSourceMode('phase2')" class="btn-browse" style="flex:1; height:52px; font-size:1.1rem; font-weight:700;">Phase II</button>
+                                <button id="modePhase1Btn" onclick="setSourceMode('phase1')" class="btn-browse" style="flex:1; height:52px; font-size:1.1rem; font-weight:700; background:var(--accent); color:#fff;">Insight/Info format</button>
+                                <button id="modePhase2Btn" onclick="setSourceMode('phase2')" class="btn-browse" style="flex:1; height:52px; font-size:1.1rem; font-weight:700;">Desigo format</button>
                             </div>
                         </div>
                         <div class="input-row mt-20">
@@ -283,7 +284,7 @@
             </div>
         </main>
     </div>
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="{{ url_for('static', filename='script.js') }}?v=1.1.2"></script>
 
     <!-- Error Modal Popup -->
     <div id="errorModal" class="error-modal-overlay">
@@ -292,8 +293,10 @@
                 <div class="error-modal-icon">
                     <i class="fas fa-exclamation-triangle"></i>
                 </div>
-                <h3 class="error-modal-title" id="errorModalTitle">Error</h3>
-                <span class="error-modal-code" id="errorModalCode">ERR-000</span>
+                <div class="error-modal-header-content">
+                    <span class="error-modal-code" id="errorModalCode">ERR-000</span>
+                    <h3 class="error-modal-title" id="errorModalTitle">Error</h3>
+                </div>
             </div>
             <p class="error-modal-message" id="errorModalMessage">An error occurred.</p>
             <button class="error-modal-button" onclick="closeErrorModal()">OK</button>
@@ -318,7 +321,7 @@
                 <h4 style="color: var(--accent); margin: 0 0 8px 0; font-size: 0.95rem; font-weight: 700;">2. Operational SOP & Workflows</h4>
                 <ol style="margin: 0 0 15px 0; padding-left: 20px; font-size: 0.85rem; line-height: 1.5;">
                     <li style="margin-bottom: 8px;"><strong>Prepare CSV Files:</strong> If your BAS export is a combined log, navigate to the <em>Data Transformation</em> page and use the Report Splitter to split it into room-specific files.</li>
-                    <li style="margin-bottom: 8px;"><strong>Configure Directory Paths:</strong> Select the source mode (Phase I for primary facilities or Phase II for expanded operations). Select the split CSV directory path and the corresponding Excel setpoint/limits specification file.</li>
+                    <li style="margin-bottom: 8px;"><strong>Configure Directory Paths:</strong> Select the source mode (Insight/Info format for primary facilities or Desigo format for expanded operations). Select the split CSV directory path and the corresponding Excel setpoint/limits specification file.</li>
                     <li style="margin-bottom: 8px;"><strong>Execute Quality Review:</strong> Run the analyzer to generate high-fidelity plots, heatmaps, and a summary breakdown of violation events (&gt; 20 min thresholds).</li>
                     <li style="margin-bottom: 8px;"><strong>Fine-tune & Tweak Thresholds:</strong> Zoom, pan, or inspect specific room plots dynamically. Interactively test different High/Low limit setpoints in real-time in each plot's header.</li>
                 </ol>
@@ -370,6 +373,47 @@
             document.getElementById('errorModalTitle').innerText = title;
             document.getElementById('errorModalCode').innerText = code;
             document.getElementById('errorModalMessage').innerText = message;
+            
+            const modalEl = document.querySelector('#errorModal .error-modal');
+            const icon = modalEl.querySelector('.error-modal-icon i');
+            
+            modalEl.classList.remove('theme-warning', 'theme-error');
+            
+            const isWarning = code.includes('ERR-008') || ['ERR-001', 'ERR-003', 'ERR-005', 'ERR-006'].some(c => code.includes(c));
+            if (isWarning) {
+                modalEl.classList.add('theme-warning');
+                if (code.includes('ERR-008')) {
+                    icon.className = 'fas fa-clock-rotate-left';
+                } else {
+                    icon.className = 'fas fa-triangle-exclamation';
+                }
+            } else {
+                modalEl.classList.add('theme-error');
+                
+                // Map specific high-fidelity FontAwesome icons based on the error code
+                if (code === 'ERR-001') {
+                    icon.className = 'fas fa-heading';
+                } else if (code === 'ERR-002') {
+                    icon.className = 'fas fa-file-excel';
+                } else if (code === 'ERR-003') {
+                    icon.className = 'fas fa-sliders';
+                } else if (code === 'ERR-004') {
+                    icon.className = 'fas fa-shield-halved';
+                } else if (code === 'ERR-005') {
+                    icon.className = 'fas fa-file-csv';
+                } else if (code === 'ERR-006') {
+                    icon.className = 'fas fa-scale-unbalanced';
+                } else if (code === 'ERR-007') {
+                    icon.className = 'fas fa-file-export';
+                } else if (code === 'ERR-009') {
+                    icon.className = 'fas fa-file-circle-exclamation';
+                } else if (code === 'ERR-010') {
+                    icon.className = 'fas fa-folder-open';
+                } else {
+                    icon.className = 'fas fa-triangle-exclamation';
+                }
+            }
+            
             document.getElementById('errorModal').classList.add('active');
         }
 

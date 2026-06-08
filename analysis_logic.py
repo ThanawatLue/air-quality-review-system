@@ -182,7 +182,7 @@ def get_file_date_range(file_path):
         pass
     return start_date, end_date
 
-def prepare_df(file_path, target_room_id=None): # dataframe  analyse
+def prepare_df(file_path, target_room_id=None, setpoint_df=None): # dataframe  analyse
     # Read-Only Data Access: Strict 'r' mode to prevent modification of raw data (FS 2.4)
     with open(file_path, 'r', encoding='utf-8', errors='ignore') as file:
         line_lst = [line.replace('"','').replace('\n','') for line in file.readlines()]
@@ -208,6 +208,16 @@ def prepare_df(file_path, target_room_id=None): # dataframe  analyse
         df = df[~df["<>Date"].str.contains('*', regex=False, na=False)]
         # Flexible parsing: Handle M/D/YYYY, D/M/YYYY or YYYY-MM-DD automatically
         df['DateTime'] = pd.to_datetime(df["<>Date"] + " " + df["Time"], errors='coerce')
+        if df['DateTime'].duplicated().any():
+            dup_series = df[df['DateTime'].duplicated()]['DateTime'].dropna()
+            if not dup_series.empty:
+                dup_series_sorted = dup_series.sort_values()
+                dup_count = len(dup_series_sorted)
+                dup_start = dup_series_sorted.iloc[0].strftime('%Y-%m-%d %H:%M:%S')
+                dup_stop = dup_series_sorted.iloc[-1].strftime('%Y-%m-%d %H:%M:%S')
+                warn_msg = f"[WARNING] ERR-008: Duplicate Timestamps Detected in file {os.path.basename(file_path)} (Room {target_room_id}). Found {dup_count:,} duplicate timestamps from {dup_start} to {dup_stop}. Dropping duplicates and keeping the first record."
+                print(warn_msg)
+                audit_trail.log_event("DUPLICATE_TIMESTAMPS_WARN", f"File: {os.path.basename(file_path)} | Room: {target_room_id} | Duplicates: {dup_count} records from {dup_start} to {dup_stop} | Action: Dropped subsequent records (ERR-008)")
         df = df.drop_duplicates(subset=['DateTime'])
         df = df.reset_index(drop=True).dropna()
         
@@ -219,9 +229,22 @@ def prepare_df(file_path, target_room_id=None): # dataframe  analyse
         rename_map = {k: v for k, v in column_mapping.items() if k in available_cols}
         df = df.rename(columns=rename_map)
         
-        # GxP: Ensure Temperature and Humidity exist (mandatory for all reports)
-        # Pressure is optional as some rooms don't have pressure sensors
-        mandatory_cols = ['DateTime', 'Temperature', 'Humidity']
+        # GxP: Ensure required columns exist based on configuration
+        mandatory_cols = ['DateTime']
+        if setpoint_df is not None and target_room_id is not None:
+            row_sp = setpoint_df[setpoint_df['Room_number'].astype(str) == target_room_id]
+            if not row_sp.empty:
+                if not pd.isna(row_sp['Temperature_Limit'].iloc[0]):
+                    mandatory_cols.append('Temperature')
+                humidity_has_spec = (not pd.isna(row_sp['Humidity_Low_Limit'].iloc[0])) and (not pd.isna(row_sp['Humidity_High_Limit'].iloc[0]))
+                if humidity_has_spec:
+                    mandatory_cols.append('Humidity')
+                pressure_has_spec = (not pd.isna(row_sp['Pressure_Low_Limit'].iloc[0])) and (not pd.isna(row_sp['Pressure_High_Limit'].iloc[0]))
+                if pressure_has_spec:
+                    mandatory_cols.append('Pressure')
+        else:
+            mandatory_cols = ['DateTime', 'Temperature', 'Humidity']
+            
         missing_mandatory = [col for col in mandatory_cols if col not in df.columns]
         
         if missing_mandatory:
@@ -250,9 +273,17 @@ def prepare_df(file_path, target_room_id=None): # dataframe  analyse
 def find_compare_path(file_path_lst, setpoint_df, room_num): #หา pressure corridor เอาไว้เทียบ
     try:
         compare_room = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]['Room_Pressure_Comparison'].values[0]
+        setpoint_rooms = set(setpoint_df['Room_number'].astype(str).tolist())
+        sorted_setpoint_rooms = sorted(list(setpoint_rooms), key=len, reverse=True)
         for match_path in file_path_lst:
             base = os.path.splitext(os.path.basename(match_path))[0]
-            room_id_from_file = '_'.join(base.split('_')[:-2])
+            room_id_from_file = None
+            for r in sorted_setpoint_rooms:
+                if base.startswith(r):
+                    room_id_from_file = r
+                    break
+            if not room_id_from_file:
+                room_id_from_file = '_'.join(base.split('_')[:-2])
             if room_id_from_file == compare_room:
                 return compare_room, match_path
         return room_num, None 
@@ -297,7 +328,7 @@ def check_reverse_violations(corridor_room_num, corridor_df, start_idx, end_idx,
 
         true_indices = bool_cond[bool_cond].index
         if not true_indices.empty:
-            print(f"      REVERSE {mode.upper()} violation data relative to {dependent_room_num}:")
+            print(f"      REVERSE {mode.upper()} violation data relative to {clean_room_num_or_name(dependent_room_num)}:")
             rev_violation_df = comparison_df.loc[true_indices].copy()
             rev_violation_df['Diff'] = rev_violation_df[f'Pressure_{corridor_room_num}'] - rev_violation_df[f'Pressure_{dependent_room_num}']
             print(rev_violation_df.to_string(index=False))
@@ -308,7 +339,7 @@ def check_reverse_violations(corridor_room_num, corridor_df, start_idx, end_idx,
                 t_start = comparison_df['DateTime'].iloc[r_start]
                 t_end = comparison_df['DateTime'].iloc[r_end]
                 # Unified format: mode room_id (e.g., over 1-P036)
-                summary_lines.append(f"\n  - {t_start.strftime('%H:%M')} to {t_end.strftime('%H:%M')} {mode} {dependent_room_num}")
+                summary_lines.append(f"\n  - {t_start.strftime('%H:%M')} to {t_end.strftime('%H:%M')} {mode} {clean_room_num_or_name(dependent_room_num)}")
     return summary_lines
 
 class QueueWriter:
@@ -407,6 +438,10 @@ def _compute_plot_result(room_data_map, setpoint_df, selected_rooms, start_dt, e
 def get_plot_info(folder_path, setpoint_path, selected_rooms, start_date, end_date, limits):
     try:
         setpoint_df = pd.read_excel(setpoint_path)
+        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
+        if missing_cols:
+            raise ValueError(f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}")
         start_dt = pd.to_datetime(start_date).tz_localize(None)
         end_dt = pd.to_datetime(end_date).tz_localize(None)
         room_data_map = {}
@@ -419,7 +454,7 @@ def get_plot_info(folder_path, setpoint_path, selected_rooms, start_date, end_da
                 room_id = '_'.join(parts[:-2])
                 if room_id not in selected_rooms: continue
                 try:
-                    room_data_map.setdefault(room_id, []).append(prepare_df(f_path, room_id))
+                    room_data_map.setdefault(room_id, []).append(prepare_df(f_path, room_id, setpoint_df))
                 except Exception as e:
                     audit_trail.log_event("PLOT_DATA_ERROR", f"Room: {room_id} | File: {file_name} | Error: {str(e)}")
         return _compute_plot_result(room_data_map, setpoint_df, selected_rooms, start_dt, end_dt)
@@ -451,6 +486,303 @@ def parse_filename_for_datetime(filename, file_path=None):
         pass
     return None
 
+
+def build_daily_wide_rows(report_data):
+    """Transform per-day stacked rows into a wide table keyed by room."""
+    day_columns = []
+    room_rows = {}
+    current_day = None
+
+    for item in report_data:
+        if item.get("is_date_header"):
+            current_day = item.get("day_column_label") or item.get("date_text", "").replace("DATE: ", "").strip()
+            if current_day and current_day not in day_columns:
+                day_columns.append(current_day)
+            continue
+
+        if not current_day:
+            continue
+
+        room_no = str(item.get("Room no.", "")).strip()
+        if not room_no:
+            continue
+
+        if room_no not in room_rows:
+            room_rows[room_no] = {
+                "Room no.": item.get("Room no.", ""),
+                "Room name": item.get("Room name", ""),
+                "Specification": item.get("Specification", ""),
+                "days": {}
+            }
+
+        if not room_rows[room_no].get("Room name"):
+            room_rows[room_no]["Room name"] = item.get("Room name", "")
+        if not room_rows[room_no].get("Specification") or room_rows[room_no]["Specification"] == "N/A":
+            room_rows[room_no]["Specification"] = item.get("Specification", room_rows[room_no]["Specification"])
+
+        new_result = str(item.get("Analysis results", ""))
+        existing_result = room_rows[room_no]["days"].get(current_day)
+        if existing_result:
+            room_rows[room_no]["days"][current_day] = f"{existing_result}\n---\n{new_result}"
+        else:
+            room_rows[room_no]["days"][current_day] = new_result
+
+    return day_columns, room_rows
+
+def _analyze_single_room_core(
+    df, 
+    room_num, 
+    setpoint_row, 
+    tick_mark, 
+    cross_mark, 
+    all_corridor_rooms, 
+    prepared_dfs_cache, 
+    selected_rooms, 
+    setpoint_df,
+    day_analysis_start,
+    day_analysis_end
+):
+    """
+    Standardized, GxP-compliant core analysis for a single room's data.
+    Shared identically by Phase I (BAS) and Phase II (EMS).
+    """
+    # OQ-TC-03: Data Integrity & OQ-TC-23: Logical Constraints
+    try:
+        T_lim = float(setpoint_row['Temperature_Limit'].iloc[0]) if not pd.isna(setpoint_row['Temperature_Limit'].iloc[0]) else 100
+    except (ValueError, TypeError):
+        raise ValueError("ERR-003: Invalid Configuration - High Limit must be a number")
+    
+    try:
+        humidity_has_spec = (not pd.isna(setpoint_row['Humidity_Low_Limit'].iloc[0])) and (not pd.isna(setpoint_row['Humidity_High_Limit'].iloc[0]))
+        H_low  = float(setpoint_row['Humidity_Low_Limit'].iloc[0])  if humidity_has_spec else 0
+        H_high = float(setpoint_row['Humidity_High_Limit'].iloc[0]) if humidity_has_spec else 100
+        
+        P_low  = float(setpoint_row['Pressure_Low_Limit'].iloc[0])  if not pd.isna(setpoint_row['Pressure_Low_Limit'].iloc[0])  else None
+        P_high = float(setpoint_row['Pressure_High_Limit'].iloc[0]) if not pd.isna(setpoint_row['Pressure_High_Limit'].iloc[0]) else None
+        
+        if humidity_has_spec and H_high < H_low:
+            raise ValueError("ERR-006: Configuration Error - High Limit cannot be lower than Low Limit.")
+        if P_low is not None and P_high is not None and P_high < P_low:
+            raise ValueError("ERR-006: Configuration Error - Pressure High Limit cannot be lower than Low Limit.")
+    except (ValueError, TypeError) as e:
+        if "ERR-006" in str(e): raise e
+        raise ValueError("ERR-003: Invalid Configuration - Limit values must be numeric")
+    
+    # Apply strict temporal filtering for the day
+    df = df[(df['DateTime'] >= day_analysis_start) & (df['DateTime'] <= day_analysis_end)].copy()
+    if df.empty:
+        return None
+
+    # --- 1. Temperature Check ---
+    t_df_all = df[df['Temperature'] > T_lim]
+    # Module 3: 10-Minute Gap Threshold / 25-Minute Rule
+    t_25 = t_df_all[t_df_all['DateTime'].diff(5).dt.total_seconds() == 1500]
+    t_idx = sorted(list(set([j for i in t_25.index for j in range(max(i-5, 0), i+1)])))
+    temp_res = f'Temperature: {tick_mark}'
+    if t_idx:
+        print(f"Temperature Violations Found for {room_num}: (Limit: ≤ {T_lim} °C)")
+        _print_df(df.loc[t_idx][['DateTime', 'Temperature']])
+        temp_res = [f'Temperature: {cross_mark}']
+        for i in find_continuous_ranges(t_idx):
+            t_range = df.loc[i[0]:i[1]]
+            temp_res.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({t_range["Temperature"].min()} to {t_range["Temperature"].max()} °C)')
+        temp_res = ''.join(temp_res)
+        print("-------------------------------")
+
+    # --- 1.1 Temperature Data Loss Check ---
+    t_loss_idx = df[df['Temperature'].isna()].index.tolist()
+    if t_loss_idx:
+        print(f"Temperature Data Loss Found for {room_num}:")
+        print_df = df.loc[t_loss_idx, ['DateTime', 'Temperature']].copy()
+        print_df['Temperature'] = 'Data Loss'
+        _print_df(print_df)
+        loss_lines = []
+        for i in find_continuous_ranges(t_loss_idx, min_length=1):
+            t_range = df.loc[i[0]:i[1]]
+            loss_lines.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
+        
+        if temp_res == f'Temperature: {tick_mark}':
+            temp_res = f'Temperature: Data Loss' + ''.join(loss_lines)
+        else:
+            temp_res = temp_res.replace(f'Temperature: {cross_mark}', f'Temperature: {cross_mark} & Data Loss') + ''.join(loss_lines)
+        print("-------------------------------")
+
+    # --- 2. Humidity Check ---
+    if not humidity_has_spec:
+        hum_res = f'\nHumidity: N/A'
+    else:
+        h_low_df = df[df['Humidity'] < H_low]
+        h_high_df = df[df['Humidity'] > H_high]
+        
+        h_low_idx = h_low_df[h_low_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
+        h_high_idx = h_high_df[h_high_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
+        
+        h_low_idx = sorted(list(set([j for i in list(h_low_idx) for j in range(max(i-5, 0), i+1)])))
+        h_high_idx = sorted(list(set([j for i in list(h_high_idx) for j in range(max(i-5, 0), i+1)])))
+        
+        hum_res = f'\nHumidity: {tick_mark}'
+        if h_low_idx or h_high_idx:
+            hum_res = [f'\nHumidity: {cross_mark}']
+            if h_high_idx:
+                print(f"Humidity High Violations Found for {room_num}: (Limit: > {H_high} %RH)")
+                _print_df(df.loc[h_high_idx][['DateTime', 'Humidity']])
+                for i in find_continuous_ranges(h_high_idx):
+                    h_range = df.loc[i[0]:i[1]]
+                    hum_res.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({h_range["Humidity"].min()} to {h_range["Humidity"].max()} %RH)')
+                    
+            if h_low_idx:
+                print(f"Humidity Low Violations Found for {room_num}: (Limit: < {H_low} %RH)")
+                _print_df(df.loc[h_low_idx][['DateTime', 'Humidity']])
+                for i in find_continuous_ranges(h_low_idx):
+                    h_range = df.loc[i[0]:i[1]]
+                    hum_res.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({h_range["Humidity"].min()} to {h_range["Humidity"].max()} %RH)')
+            hum_res = ''.join(hum_res)
+            print("-------------------------------")
+
+        # --- 2.1 Humidity Data Loss Check ---
+        h_loss_idx = df[df['Humidity'].isna()].index.tolist()
+        if h_loss_idx:
+            print(f"Humidity Data Loss Found for {room_num}:")
+            print_df = df.loc[h_loss_idx, ['DateTime', 'Humidity']].copy()
+            print_df['Humidity'] = 'Data Loss'
+            _print_df(print_df)
+            loss_lines = []
+            for i in find_continuous_ranges(h_loss_idx, min_length=1):
+                h_range = df.loc[i[0]:i[1]]
+                loss_lines.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
+            
+            if hum_res == f'\nHumidity: {tick_mark}':
+                hum_res = f'\nHumidity: Data Loss' + ''.join(loss_lines)
+            else:
+                hum_res = hum_res.replace(f'\nHumidity: {cross_mark}', f'\nHumidity: {cross_mark} & Data Loss') + ''.join(loss_lines)
+            print("-------------------------------")
+
+    # --- 3. Pressure Check ---
+    if P_low is None or P_high is None:
+        press_res = f'\nPressure: N/A'
+    else:
+        is_high_pressure = (P_low >= 35)
+        p_low_df = df[df['Pressure'] < P_low]
+        p_high_df = df[df['Pressure'] > P_high]
+        
+        p_low_idx = p_low_df[p_low_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
+        p_high_idx = p_high_df[p_high_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
+
+        p_low_25min_idx = sorted(list(set([j for i in list(p_low_idx) for j in range(max(i-5, 0), i+1)])))
+        p_high_25min_idx = sorted(list(set([j for i in list(p_high_idx) for j in range(max(i-5, 0), i+1)])))
+
+        press_res = f'\nPressure: {tick_mark}'
+        all_violation_intervals = []
+
+        # Find compare corridor room directly from setpoint_df
+        try:
+            compare_room_val = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]['Room_Pressure_Comparison'].values[0]
+            math_pressure_room = str(compare_room_val) if not pd.isna(compare_room_val) else room_num
+        except (IndexError, KeyError):
+            math_pressure_room = room_num
+        math_pressure_df = prepared_dfs_cache.get(math_pressure_room, pd.DataFrame())
+
+        for viol_idx_list, viol_label, limit_val in [
+            (p_low_25min_idx, "Low", P_low),
+            (p_high_25min_idx, "High", P_high)
+        ]:
+            if not viol_idx_list:
+                continue
+
+            print(f"{viol_label} Pressure Violations Found for {room_num}: (Limit: {P_low} - {P_high} Pa)")
+            has_corridor = (room_num != math_pressure_room and not math_pressure_df.empty)
+
+            for i in find_continuous_ranges(viol_idx_list):
+                p_range = df.loc[i[0]:i[1]]
+                corr_status = ""
+                is_actual_violation = True
+
+                if has_corridor:
+                    comp = pd.merge_asof(
+                        p_range[['DateTime', 'Pressure']].sort_values('DateTime'),
+                        math_pressure_df[['DateTime', 'Pressure']].sort_values('DateTime'),
+                        on='DateTime', direction='nearest', tolerance=pd.Timedelta('60s'),
+                        suffixes=(f'_{room_num}', f'_{math_pressure_room}')
+                    ).dropna(subset=[f'Pressure_{math_pressure_room}'])
+                    comp['Diff'] = comp[f'Pressure_{room_num}'] - comp[f'Pressure_{math_pressure_room}']
+                    
+                    print(f"  - Interval {p_range['DateTime'].iloc[0]} to {p_range['DateTime'].iloc[-1]} (Corridor: {clean_room_num_or_name(math_pressure_room)})")
+                    print(f"    Violation Type: {viol_label} ({'Above' if viol_label == 'High' else 'Below'} {limit_val} Pa)")
+                    _print_df(comp)
+
+                    if not comp.empty:
+                        if is_high_pressure:
+                            # For high-pressure room (e.g. 40-50 Pa), any point under corridor (< 0) is a GxP violation
+                            has_under = (comp['Diff'] < 0).any()
+                            if has_under:
+                                corr_status = f" under {clean_room_num_or_name(math_pressure_room)}"
+                                is_actual_violation = True
+                            else:
+                                corr_status = f" over {clean_room_num_or_name(math_pressure_room)}"
+                                is_actual_violation = False
+                        else:
+                            # For low-pressure room, any point over corridor (> 0) is a GxP violation
+                            has_over = (comp['Diff'] > 0).any()
+                            if has_over:
+                                corr_status = f" over {clean_room_num_or_name(math_pressure_room)}"
+                                is_actual_violation = True
+                            else:
+                                corr_status = f" within {clean_room_num_or_name(math_pressure_room)}"
+                                is_actual_violation = False
+                else:
+                    print(f"  - Interval {p_range['DateTime'].iloc[0]} to {p_range['DateTime'].iloc[-1]}")
+                    print(f"    Violation Type: {viol_label} ({'Above' if viol_label == 'High' else 'Below'} {limit_val} Pa)")
+                    _print_df(p_range[['DateTime', 'Pressure']])
+
+                rev_lines = []
+                if room_num in all_corridor_rooms:
+                    rev_lines = check_reverse_violations(room_num, df, i[0], i[1], setpoint_df, selected_rooms, prepared_dfs_cache)
+
+                interval_text = (
+                    f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to '
+                    f'{p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} '
+                    f'({p_range["Pressure"].min():.2f} to {p_range["Pressure"].max():.2f} Pa)'
+                    f'{corr_status}' + ''.join(rev_lines)
+                )
+                all_violation_intervals.append((p_range['DateTime'].iloc[0], interval_text, is_actual_violation))
+
+            print("-------------------------------")
+
+        if all_violation_intervals:
+            all_violation_intervals.sort(key=lambda x: x[0])
+            has_real_violation = any(v[2] for v in all_violation_intervals)
+            press_res = [f'\nPressure: {cross_mark if has_real_violation else tick_mark}']
+            for _, interval_text, _ in all_violation_intervals:
+                press_res.append(interval_text)
+            press_res = ''.join(press_res)
+
+        # Pressure data loss check
+        p_loss_idx = df[df['Pressure'].isna()].index.tolist()
+        if p_loss_idx:
+            print(f"Pressure Data Loss Found for {room_num}:")
+            print_df = df.loc[p_loss_idx, ['DateTime', 'Pressure']].copy()
+            print_df['Pressure'] = 'Data Loss'
+            _print_df(print_df)
+            loss_lines = []
+            for i in find_continuous_ranges(p_loss_idx, min_length=1):
+                p_range = df.loc[i[0]:i[1]]
+                loss_lines.append(f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
+            
+            if press_res == f'\nPressure: {tick_mark}':
+                press_res = f'\nPressure: Data Loss' + ''.join(loss_lines)
+            elif press_res.startswith(f'\nPressure: {cross_mark}'):
+                press_res = press_res.replace(f'\nPressure: {cross_mark}', f'\nPressure: {cross_mark} & Data Loss') + ''.join(loss_lines)
+            print("-------------------------------")
+
+    # Format specs and append to report
+    humidity_spec = "N/A" if not humidity_has_spec else f"{H_low} - {H_high} %RH"
+    pressure_spec = "N/A" if (P_low is None or P_high is None) else f"{P_low} - {P_high} Pa"
+    
+    spec_txt = f"Temperature: \u2264 {T_lim}°C\nHumidity: {humidity_spec}\nPressure: {pressure_spec}"
+    analysis_res_txt = temp_res + hum_res + press_res
+    
+    return spec_txt, analysis_res_txt
+
 def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=None, end_date=None, log_queue=None):
     old_stdout = sys.stdout
     sys.stdout = log_stream = QueueWriter(log_queue)
@@ -461,7 +793,21 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
         except FileNotFoundError:
             raise ValueError("ERR-002: Limit File Not Found")
             
+        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
+        if missing_cols:
+            raise ValueError(f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}")
+            
         all_corridor_rooms = set(setpoint_df['Room_Pressure_Comparison'].dropna().astype(str).unique()) if 'Room_Pressure_Comparison' in setpoint_df.columns else set()
+        needed_rooms = set(selected_rooms) if selected_rooms else set()
+        if selected_rooms:
+            for r in selected_rooms:
+                sp_row = setpoint_df[setpoint_df['Room_number'].astype(str) == r]
+                if not sp_row.empty and 'Room_Pressure_Comparison' in setpoint_df.columns:
+                    comp_val = sp_row['Room_Pressure_Comparison'].iloc[0]
+                    if not pd.isna(comp_val):
+                        needed_rooms.add(str(comp_val))
+                        
         tick_mark, cross_mark = 'Passed', 'Out of spec'
         start_dt = pd.to_datetime(start_date).tz_localize(None) if start_date else None
         end_dt = pd.to_datetime(end_date).tz_localize(None) if end_date else None
@@ -469,6 +815,8 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
         # GAMP 5: UR-DI-01 Log analysis start
         limit_hash = get_file_hash(setpoint_path)
         audit_trail.log_event("ANALYSIS_START", f"Folder: {folder_path} | Limit_Hash: {limit_hash}")
+
+        room_errors = {}
 
         all_csv_files = []
         for root, dirs, files in os.walk(folder_path):
@@ -489,10 +837,46 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
             if fs and fe and not (fe < start_dt.date() or fs > end_dt.date())
         ]
 
+        # GxP Upfront Validation: Verify all selected rooms have valid, complete files (ERR-005)
+        sorted_selected = sorted(list(needed_rooms), key=len, reverse=True)
+        for room_id in (selected_rooms or []):
+            if setpoint_df[setpoint_df['Room_number'].astype(str) == room_id].empty:
+                continue
+            
+            # Check if any CSV file in the input folder matches this room ID
+            room_files = []
+            for f_path in all_csv_files:
+                base_name = os.path.splitext(os.path.basename(f_path))[0]
+                matched_r = None
+                for r in sorted_selected:
+                    if base_name.startswith(r):
+                        matched_r = r
+                        break
+                if not matched_r:
+                    matched_r = '_'.join(base_name.split('_')[:-2])
+                if matched_r == room_id:
+                    room_files.append(f_path)
+            
+            if not room_files:
+                raise ValueError(f"ERR-005: Raw data file not found in {folder_path} for Room {room_id}")
+            
+            # Check if any file is within the selected date range
+            room_files_in_range = [
+                f for f in room_files
+                if f in file_date_cache and file_date_cache[f][0] and file_date_cache[f][1] and
+                not (file_date_cache[f][1] < start_dt.date() or file_date_cache[f][0] > end_dt.date())
+            ]
+            if not room_files_in_range:
+                raise ValueError(f"ERR-005: Raw data for Room {room_id} is missing or out of the selected date range.")
+            
+            # Validate column completeness
+            for f_path in room_files_in_range:
+                prepare_df(f_path, room_id, setpoint_df)
+
         if not relevant_files:
-            print("No CSV files found matching criteria.")
-            audit_trail.log_event("ANALYSIS_FAILED", "No CSV files found matching criteria.")
-            return None, log_stream.getvalue(), None
+            audit_trail.log_event("ANALYSIS_FAILED", "ERR-010: No Matching Files Found matching criteria.")
+            raise ValueError("ERR-010: No Matching Files Found matching criteria.")
+
 
         date_grouped_files = {}
         for d in pd.date_range(start_dt.date(), end_dt.date()):
@@ -507,27 +891,50 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
         all_room_dfs = {}  # accumulate dfs across all days for chart — avoids re-reading files
 
         for current_date in sorted(date_grouped_files.keys()):
+            day_start = pd.Timestamp(current_date).tz_localize(None)
+            day_end = day_start + pd.Timedelta(hours=23, minutes=55)
+            day_analysis_start = max(day_start, start_dt)
+            day_analysis_end = min(day_end, end_dt)
             print(f"\n============================================================")
             print(f" DATE: {current_date.strftime('%Y-%m-%d')}")
             print(f"============================================================\n")
             
-            # Add a special header row for the Excel report
-            report_data.append({"is_date_header": True, "date_text": f"DATE: {current_date.strftime('%Y-%m-%d')}"})
+            # Add a special header row for the Excel report (will update with actual data time span)
+            day_header_row = {
+                "is_date_header": True,
+                "date_text": f"DATE: {current_date.strftime('%Y-%m-%d')}",
+                "day_column_label": f"{current_date.strftime('%Y-%m-%d')} ({day_analysis_start.strftime('%H:%M')}-{day_analysis_end.strftime('%H:%M')})"
+            }
+            report_data.append(day_header_row)
             
             day_files = date_grouped_files[current_date]
             prepared_dfs_cache = {}
             day_file_paths = []
+            day_file_to_room = {}
             
+            sorted_selected = sorted(list(needed_rooms), key=len, reverse=True)
             for f_path in day_files:
                 base_name = os.path.splitext(os.path.basename(f_path))[0]
-                room_id = '_'.join(base_name.split('_')[:-2])
-                if room_id in selected_rooms:
+                room_id = None
+                for r in sorted_selected:
+                    if base_name.startswith(r):
+                        room_id = r
+                        break
+                if not room_id:
+                    room_id = '_'.join(base_name.split('_')[:-2])
+                if room_id in needed_rooms:
                     if setpoint_df[setpoint_df['Room_number'].astype(str) == room_id].empty:
                         continue  # No specification defined — intentionally skip, no error
-                    day_file_paths.append(f_path)
                     try:
-                        prepared_dfs_cache[room_id] = prepare_df(f_path, room_id)
-                        all_room_dfs.setdefault(room_id, []).append(prepared_dfs_cache[room_id])
+                        prepared_df = prepare_df(f_path, room_id, setpoint_df)
+                        prepared_df = prepared_df[(prepared_df['DateTime'] >= day_start) & (prepared_df['DateTime'] <= day_end)].copy()
+                        if prepared_df.empty:
+                            continue
+                        if room_id in selected_rooms:
+                            day_file_paths.append(f_path)
+                            day_file_to_room[f_path] = room_id
+                        prepared_dfs_cache[room_id] = prepared_df
+                        all_room_dfs.setdefault(room_id, []).append(prepared_df)
                         f_hash = get_file_hash(f_path)
                         audit_trail.log_event("FILE_PROCESSED", f"Room: {room_id} | File: {os.path.basename(f_path)} | SHA256: {f_hash}")
                     except Exception as e:
@@ -537,11 +944,23 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
                         audit_trail.log_event("FILE_ERROR", f"Room: {room_id} | File: {os.path.basename(f_path)} | Error: {str(e)}")
                         if "FAILED_ROOMS" not in prepared_dfs_cache: prepared_dfs_cache["FAILED_ROOMS"] = {}
                         prepared_dfs_cache["FAILED_ROOMS"][room_id] = str(e)
-
+                        if room_id in selected_rooms:
+                            day_file_paths.append(f_path)
+                            day_file_to_room[f_path] = room_id
+ 
+            # Prefer actual data time span from day dataframes; fallback to analysis window.
+            day_dfs = [v for k, v in prepared_dfs_cache.items() if k != "FAILED_ROOMS" and isinstance(v, pd.DataFrame) and not v.empty]
+            if day_dfs:
+                actual_day_start = min(df['DateTime'].min() for df in day_dfs)
+                actual_day_end = max(df['DateTime'].max() for df in day_dfs)
+                day_header_row["day_column_label"] = f"{current_date.strftime('%Y-%m-%d')} ({actual_day_start.strftime('%H:%M')}-{actual_day_end.strftime('%H:%M')})"
+ 
             _total_day = len(day_file_paths)
             for _day_idx, file_path in enumerate(day_file_paths, 1):
                 try:
-                    room_num = '_'.join(os.path.splitext(os.path.basename(file_path))[0].split('_')[:-2])
+                    room_num = day_file_to_room.get(file_path)
+                    if not room_num:
+                        room_num = '_'.join(os.path.splitext(os.path.basename(file_path))[0].split('_')[:-2])
                     print(f"[{_day_idx}/{_total_day}] Processing Room: {room_num}")
                     
                     # Check if this room failed during prepare_df
@@ -551,10 +970,11 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
                         room_name_err = str(sp_row_err['Room_name'].iloc[0]) if not sp_row_err.empty and not pd.isna(sp_row_err['Room_name'].iloc[0]) else "N/A"
                         print(f"[ERROR] Skipping Room {room_num} ({room_name_err}): {err_reason}")
                         audit_trail.log_event("ROOM_SKIPPED_ERROR", f"Room: {room_num} | Name: {room_name_err} | Reason: {err_reason}")
+                        room_errors[room_num] = err_reason
                         report_data.append({
                             "is_date_header": False, "is_error": True,
                             "Room no.": room_num, "Room name": room_name_err,
-                            "Speification": "N/A",
+                            "Specification": "N/A",
                             "Analysis results": f"Error: {err_reason}"
                         })
                         continue
@@ -562,239 +982,38 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
                     setpoint_row = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]
                     if setpoint_row.empty: continue
                                   
-                    # OQ-TC-03: Data Integrity & OQ-TC-23: Logical Constraints
-                    try:
-                        T_lim = float(setpoint_row['Temperature_Limit'].iloc[0]) if not pd.isna(setpoint_row['Temperature_Limit'].iloc[0]) else 100
-                    except (ValueError, TypeError):
-                        raise ValueError("ERR-003: Invalid Configuration - High Limit must be a number")
-                    
-                    try:
-                        H_low = float(setpoint_row['Humidity_Low_Limit'].iloc[0]) if not pd.isna(setpoint_row['Humidity_Low_Limit'].iloc[0]) else 0
-                        H_high = float(setpoint_row['Humidity_High_Limit'].iloc[0]) if not pd.isna(setpoint_row['Humidity_High_Limit'].iloc[0]) else 100
-                        P_low = float(setpoint_row['Pressure_Low_Limit'].iloc[0]) if not pd.isna(setpoint_row['Pressure_Low_Limit'].iloc[0]) else None
-                        P_high = float(setpoint_row['Pressure_High_Limit'].iloc[0]) if not pd.isna(setpoint_row['Pressure_High_Limit'].iloc[0]) else None
-                        
-                        if H_high < H_low:
-                            raise ValueError("ERR-006: Configuration Error - High Limit cannot be lower than Low Limit or Low Limit cannot be higher than High Limit.")
-                        if P_low is not None and P_high is not None and P_high < P_low:
-                            raise ValueError("ERR-006: Configuration Error - High Limit cannot be lower than Low Limit or Low Limit cannot be higher than High Limit.")
-                    except (ValueError, TypeError) as e:
-                        if "ERR-006" in str(e): raise e
-                        raise ValueError("ERR-003: Invalid Configuration - Limit values must be numeric")
-                    
                     df = prepared_dfs_cache.get(room_num)
                     if df is None: continue
                     
-                    # CRR-TC-02: Apply strict row-level temporal filtering
-                    # Only analyze data within the exact start/end window selected in UI
-                    df = df[(df['DateTime'] >= start_dt) & (df['DateTime'] <= end_dt)].copy()
-                    if df.empty: continue
+                    # Verify corridor comparison data is present (ERR-011)
+                    compare_room_val = setpoint_row['Room_Pressure_Comparison'].iloc[0] if 'Room_Pressure_Comparison' in setpoint_row.columns else None
+                    if not pd.isna(compare_room_val) and str(compare_room_val).strip() != "" and str(compare_room_val) != room_num:
+                        corr_room_id = str(compare_room_val)
+                        if corr_room_id not in prepared_dfs_cache or prepared_dfs_cache[corr_room_id].empty:
+                            audit_trail.log_event("ALARM_TRIGGERED", f"Action: analyze | Code: ERR-011 | Msg: Missing corridor data {corr_room_id} for Room {room_num}")
+                            raise ValueError(f"ERR-011: Missing Corridor Data - Room {room_num} requires comparison with corridor room {corr_room_id}, but corridor data is missing.")
                     
-                    # --- 1. Temperature Check ---
-                    t_df_all = df[df['Temperature'] > T_lim]
-                    # Module 3: 10-Minute Gap Threshold / 25-Minute Rule
-                    # Enforce strict continuity: diff(5) == 1500s ensures 6 points (25 mins) are exactly 5 mins apart.
-                    # If any gap > 300s exists, diff(5) will not equal 1500, effectively resetting the counter.
-                    t_25 = t_df_all[t_df_all['DateTime'].diff(5).dt.total_seconds() == 1500]
-                    t_idx = sorted(list(set([j for i in t_25.index for j in range(max(i-5, 0), i+1)])))
-                    temp_res = f'Temperature: {tick_mark}'
-                    if t_idx:
-                        print(f"Temperature Violations Found for {room_num}: (Limit: ≤ {T_lim} °C)")
-                        _print_df(df.loc[t_idx])
-                        temp_res = [f'Temperature: {cross_mark}']
-                        for i in find_continuous_ranges(t_idx):
-                            t_range = df.loc[i[0]:i[1]]
-                            temp_res.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({t_range["Temperature"].min()} to {t_range["Temperature"].max()} °C)')
-                        temp_res = ''.join(temp_res)
-                        print("-------------------------------")
-
-                    # --- 1.1 Temperature Data Loss Check ---
-                    t_loss_idx = df[df['Temperature'].isna()].index.tolist()
-                    if t_loss_idx:
-                        print(f"Temperature Data Loss Found for {room_num}:")
-                        print_df = df.loc[t_loss_idx, ['DateTime', 'Temperature']].copy()
-                        print_df['Temperature'] = 'Data Loss'
-                        _print_df(print_df)
-                        loss_lines = []
-                        for i in find_continuous_ranges(t_loss_idx, min_length=1):
-                            t_range = df.loc[i[0]:i[1]]
-                            loss_lines.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
-                        
-                        if temp_res == f'Temperature: {tick_mark}':
-                            temp_res = f'Temperature: Data Loss' + ''.join(loss_lines)
-                        else:
-                            temp_res = temp_res.replace(f'Temperature: {cross_mark}', f'Temperature: {cross_mark} & Data Loss') + ''.join(loss_lines)
-
-                    # --- 2. Humidity Check ---
-                    h_low_df = df[df['Humidity'] < H_low]
-                    h_high_df = df[df['Humidity'] > H_high]
-                    # Module 3: 10-Minute Gap Threshold / 25-Minute Rule (Strict Continuity)
-                    h_low_idx = h_low_df[h_low_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
-                    h_high_idx = h_high_df[h_high_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
-                    h_low_idx = sorted(list(set([j for i in list(h_low_idx) for j in range(max(i-5, 0), i+1)])))
-                    h_high_idx = sorted(list(set([j for i in list(h_high_idx) for j in range(max(i-5, 0), i+1)])))
-                    
-                    hum_res = f'\nHumidity: {tick_mark}'
-                    if h_low_idx or h_high_idx:
-                        hum_res = [f'\nHumidity: {cross_mark}']
-                        
-                        if h_high_idx:
-                            print(f"Humidity High Violations Found for {room_num}: (Limit: > {H_high} %RH)")
-                            _print_df(df.loc[h_high_idx])
-                            for i in find_continuous_ranges(h_high_idx):
-                                h_range = df.loc[i[0]:i[1]]
-                                hum_res.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({h_range["Humidity"].min()} to {h_range["Humidity"].max()} %RH)')
-                                
-                        if h_low_idx:
-                            print(f"Humidity Low Violations Found for {room_num}: (Limit: < {H_low} %RH)")
-                            _print_df(df.loc[h_low_idx])
-                            for i in find_continuous_ranges(h_low_idx):
-                                h_range = df.loc[i[0]:i[1]]
-                                hum_res.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({h_range["Humidity"].min()} to {h_range["Humidity"].max()} %RH)')
-                        
-                        hum_res = ''.join(hum_res)
-                        print("-------------------------------")
-
-                    # --- 2.1 Humidity Data Loss Check ---
-                    h_loss_idx = df[df['Humidity'].isna()].index.tolist()
-                    if h_loss_idx:
-                        print(f"Humidity Data Loss Found for {room_num}:")
-                        print_df = df.loc[h_loss_idx, ['DateTime', 'Humidity']].copy()
-                        print_df['Humidity'] = 'Data Loss'
-                        _print_df(print_df)
-                        loss_lines = []
-                        for i in find_continuous_ranges(h_loss_idx, min_length=1):
-                            h_range = df.loc[i[0]:i[1]]
-                            loss_lines.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
-                        
-                        if hum_res == f'\nHumidity: {tick_mark}':
-                            hum_res = f'\nHumidity: Data Loss' + ''.join(loss_lines)
-                        else:
-                            hum_res = hum_res.replace(f'\nHumidity: {cross_mark}', f'\nHumidity: {cross_mark} & Data Loss') + ''.join(loss_lines)
-
-                    # --- 3. Pressure Check ---
-                    if P_low is None or P_high is None:
-                        press_res = f'\nPressure: N/A'
-                    else:
-                        # 45 Pa type rooms (P_low >= 35) must stay ABOVE corridor → "over" = Pass, "under" = Out of Spec
-                        # 15/30 Pa type rooms (P_low < 35) must stay BELOW corridor → "within" = Pass, "over" = Out of Spec
-                        is_high_pressure = (P_low >= 35)
-
-                        p_low_df = df[df['Pressure'] < P_low]
-                        p_high_df = df[df['Pressure'] > P_high]
-                        # Module 3: 10-Minute Gap Threshold / 25-Minute Rule (Strict Continuity)
-                        p_low_idx = p_low_df[p_low_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
-                        p_high_idx = p_high_df[p_high_df['DateTime'].diff(5).dt.total_seconds() == 1500].index
-
-                        p_low_25min_idx = sorted(list(set([j for i in list(p_low_idx) for j in range(max(i-5, 0), i+1)])))
-                        p_high_25min_idx = sorted(list(set([j for i in list(p_high_idx) for j in range(max(i-5, 0), i+1)])))
-
-                        press_res = f'\nPressure: {tick_mark}'
-                        # Each entry: (start_time, interval_text, is_actual_violation)
-                        all_violation_intervals = []
-
-                        math_pressure_room, _ = find_compare_path(day_file_paths, setpoint_df, room_num)
-                        math_pressure_df = prepared_dfs_cache.get(math_pressure_room, pd.DataFrame())
-
-                        for viol_idx_list, viol_label, limit_val in [
-                            (p_low_25min_idx, "Low", P_low),
-                            (p_high_25min_idx, "High", P_high)
-                        ]:
-                            if not viol_idx_list:
-                                continue
-
-                            print(f"{viol_label} Pressure Violations Found for {room_num}: (Limit: {P_low} - {P_high} Pa)")
-                            has_corridor = (room_num != math_pressure_room and not math_pressure_df.empty)
-
-                            for i in find_continuous_ranges(viol_idx_list):
-                                p_range = df.loc[i[0]:i[1]]
-                                corr_status = ""
-                                is_actual_violation = True  # default until corridor comparison says otherwise
-
-                                if has_corridor:
-                                    # CRR-TC-02: Temporal Alignment Logic Verification (Ref: CRR-02)
-                                    # Align room and corridor pressure data within a 60s window
-                                    comp = pd.merge_asof(
-                                        p_range[['DateTime', 'Pressure']].sort_values('DateTime'),
-                                        math_pressure_df[['DateTime', 'Pressure']].sort_values('DateTime'),
-                                        on='DateTime', direction='nearest', tolerance=pd.Timedelta('60s'),
-                                        suffixes=(f'_{room_num}', f'_{math_pressure_room}')
-                                    ).dropna(subset=[f'Pressure_{math_pressure_room}'])
-                                    comp['Diff'] = comp[f'Pressure_{room_num}'] - comp[f'Pressure_{math_pressure_room}']
-                                    print(f"  - Interval {p_range['DateTime'].iloc[0]} to {p_range['DateTime'].iloc[-1]} (Corridor: {math_pressure_room})")
-                                    print(f"    Violation Type: {viol_label} ({'Above' if viol_label == 'High' else 'Below'} {limit_val} Pa)")
-                                    _print_df(comp)
-
-                                    if not comp.empty:
-                                        room_over_corridor = comp['Diff'].mean() >= 0
-                                        if is_high_pressure:
-                                            # 45 Pa rooms: over corridor = safe (Pass); under corridor = Out of Spec
-                                            if room_over_corridor:
-                                                corr_status = f" over {math_pressure_room}"
-                                                is_actual_violation = False
-                                            else:
-                                                corr_status = f" under {math_pressure_room}"
-                                                is_actual_violation = True
-                                        else:
-                                            # 15/30 Pa rooms: within corridor (room < corridor) = safe (Pass); over corridor = Out of Spec
-                                            if room_over_corridor:
-                                                corr_status = f" over {math_pressure_room}"
-                                                is_actual_violation = True
-                                            else:
-                                                corr_status = f" within {math_pressure_room}"
-                                                is_actual_violation = False
-                                else:
-                                    print(f"  - Interval {p_range['DateTime'].iloc[0]} to {p_range['DateTime'].iloc[-1]}")
-                                    print(f"    Violation Type: {viol_label} ({'Above' if viol_label == 'High' else 'Below'} {limit_val} Pa)")
-                                    _print_df(p_range[['DateTime', 'Pressure']])
-
-                                rev_lines = []
-                                if room_num in all_corridor_rooms:
-                                    rev_lines = check_reverse_violations(room_num, df, i[0], i[1], setpoint_df, selected_rooms, prepared_dfs_cache)
-
-                                interval_text = (
-                                    f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to '
-                                    f'{p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} '
-                                    f'({p_range["Pressure"].min():.2f} to {p_range["Pressure"].max():.2f} Pa)'
-                                    f'{corr_status}' + ''.join(rev_lines)
-                                )
-                                all_violation_intervals.append((p_range['DateTime'].iloc[0], interval_text, is_actual_violation))
-
-                            print("-------------------------------")
-
-                        if all_violation_intervals:
-                            all_violation_intervals.sort(key=lambda x: x[0])
-                            has_real_violation = any(v[2] for v in all_violation_intervals)
-                            press_res = [f'\nPressure: {cross_mark if has_real_violation else tick_mark}']
-                            for _, interval_text, _ in all_violation_intervals:
-                                press_res.append(interval_text)
-                            press_res = ''.join(press_res)
-
-                    # --- 3.1 Pressure Data Loss Check (only when pressure limits are defined) ---
-                    p_loss_idx = [] if (P_low is None or P_high is None) else df[df['Pressure'].isna()].index.tolist()
-                    if p_loss_idx:
-                        print(f"Pressure Data Loss Found for {room_num}:")
-                        print_df = df.loc[p_loss_idx, ['DateTime', 'Pressure']].copy()
-                        print_df['Pressure'] = 'Data Loss'
-                        _print_df(print_df)
-                        loss_lines = []
-                        for i in find_continuous_ranges(p_loss_idx, min_length=1):
-                            p_range = df.loc[i[0]:i[1]]
-                            loss_lines.append(f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
-                        
-                        if press_res == f'\nPressure: {tick_mark}':
-                            press_res = f'\nPressure: Data Loss' + ''.join(loss_lines)
-                        elif press_res.startswith(f'\nPressure: {cross_mark}'):
-                            press_res = press_res.replace(f'\nPressure: {cross_mark}', f'\nPressure: {cross_mark} & Data Loss') + ''.join(loss_lines)
-
-                    # Format pressure spec display
-                    pressure_spec = "N/A" if (P_low is None or P_high is None) else f"{P_low} - {P_high} Pa"
+                    res = _analyze_single_room_core(
+                        df, 
+                        room_num, 
+                        setpoint_row, 
+                        tick_mark, 
+                        cross_mark, 
+                        all_corridor_rooms, 
+                        prepared_dfs_cache, 
+                        selected_rooms, 
+                        setpoint_df,
+                        day_analysis_start,
+                        day_analysis_end
+                    )
+                    if res is None: continue
+                    spec_txt, analysis_res_txt = res
                     
                     report_data.append({
                         "is_date_header": False,
                         "Room no.": room_num, "Room name": setpoint_row['Room_name'].iloc[0],
-                        "Speification": f"Temperature: \u2264 {T_lim}°C\nHumidity: {H_low} - {H_high} %RH\nPressure: {pressure_spec}", 
-                        "Analysis results": temp_res + hum_res + press_res
+                        "Specification": spec_txt, 
+                        "Analysis results": analysis_res_txt
                     })
                     print(f"[{_day_idx}/{_total_day}] Completed Room: {room_num}\n--------------------")
                 except Exception as e:
@@ -802,6 +1021,7 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
                     print(error_msg)
                     traceback.print_exc(file=sys.stdout)
                     audit_trail.log_event("ROOM_ERROR", f"Room: {room_num} | Error: {str(e)}")
+                    room_errors[room_num] = str(e)
                     try:
                         sp_row_err2 = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]
                         room_name_err2 = str(sp_row_err2['Room_name'].iloc[0]) if not sp_row_err2.empty and not pd.isna(sp_row_err2['Room_name'].iloc[0]) else "N/A"
@@ -810,55 +1030,56 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
                     report_data.append({
                         "is_date_header": False, "is_error": True,
                         "Room no.": room_num, "Room name": room_name_err2,
-                        "Speification": "N/A",
+                        "Specification": "N/A",
                         "Analysis results": f"Error: {str(e)}"
                     })
 
-        # --- Excel Export with Date Headers ---
+        # --- Excel Export (wide day columns) ---
         output_path = os.path.join('reports', f"AQR_Report_{time.strftime('%Y%m%d_%H%M%S')}.xlsx")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         try:
             with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
                 wb = writer.book
                 ws = wb.add_worksheet('Report')
 
                 fmt_header = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#b0b0b0'})
-                fmt_date = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#e2e8f0', 'font_size': 12})
                 fmt_center = wb.add_format({'font_name': 'Times New Roman', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
                 fmt_left = wb.add_format({'font_name': 'Times New Roman', 'border': 1, 'align': 'left', 'valign': 'vcenter', 'text_wrap': True})
                 fmt_top = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#b0b0b0'})
                 fmt_error = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'left', 'valign': 'vcenter', 'text_wrap': True, 'bg_color': '#FFE0E0', 'font_color': '#CC0000'})
                 fmt_error_center = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'bg_color': '#FFE0E0', 'font_color': '#CC0000'})
 
+                day_columns, room_rows = build_daily_wide_rows(report_data)
+                headers = ["Room no.", "Room name", "Specification"] + day_columns
+                last_col = len(headers) - 1
+
                 if start_dt and end_dt:
-                    ws.merge_range('A1:C1', f'Period analyzed: {start_dt.strftime("%Y-%m-%d %H:%M")} to {end_dt.strftime("%Y-%m-%d %H:%M")}', fmt_top)
+                    ws.merge_range(0, 0, 0, max(2, last_col - 1), f'Period analyzed: {start_dt.strftime("%Y-%m-%d %H:%M")} to {end_dt.strftime("%Y-%m-%d %H:%M")}', fmt_top)
 
                 # GAMP 5: UR-FN-08 Hardcode version and generation date (IQ-TC-01)
-                ws.write('D1', f'Software Version: v1.1.0\nGenerated: {time.strftime("%Y-%m-%d %H:%M")}', fmt_center)
+                ws.write(0, last_col, f'Software Version: v1.1.0\nGenerated: {time.strftime("%Y-%m-%d %H:%M")}', fmt_center)
 
-                headers = ["Room no.", "Room name", "Specification", "Analysis results"]
-                for col, val in enumerate(headers): ws.write(1, col, val, fmt_header)
+                for col, val in enumerate(headers):
+                    ws.write(1, col, val, fmt_header)
 
-                ws.set_column('A:A', 12); ws.set_column('B:B', 35); ws.set_column('C:C', 25); ws.set_column('D:D', 45)
-                ws.freeze_panes(2, 0)
+                ws.set_column('A:A', 12); ws.set_column('B:B', 35); ws.set_column('C:C', 25)
+                for day_col_idx in range(3, len(headers)):
+                    ws.set_column(day_col_idx, day_col_idx, 45)
+                ws.freeze_panes(2, 3)
 
                 current_row = 2
-                for item in report_data:
-                    if item["is_date_header"]:
-                        ws.merge_range(current_row, 0, current_row, 3, item["date_text"], fmt_date)
-                    elif item.get("is_error"):
-                        room_no_clean = clean_room_num_or_name(item["Room no."])
-                        room_name_clean = clean_room_num_or_name(item["Room name"])
-                        ws.write(current_row, 0, room_no_clean, fmt_error_center)
-                        ws.write(current_row, 1, room_name_clean, fmt_error)
-                        ws.write(current_row, 2, item["Speification"], fmt_error)
-                        ws.write(current_row, 3, item["Analysis results"], fmt_error)
-                    else:
-                        room_no_clean = clean_room_num_or_name(item["Room no."])
-                        room_name_clean = clean_room_num_or_name(item["Room name"])
-                        ws.write(current_row, 0, room_no_clean, fmt_center)
-                        ws.write(current_row, 1, room_name_clean, fmt_left)
-                        ws.write(current_row, 2, item["Speification"], fmt_left)
-                        ws.write(current_row, 3, item["Analysis results"], fmt_left)
+                for room_no in sorted(room_rows.keys()):
+                    row = room_rows[room_no]
+                    room_no_clean = clean_room_num_or_name(row["Room no."])
+                    room_name_clean = clean_room_num_or_name(row["Room name"])
+                    ws.write(current_row, 0, room_no_clean, fmt_center)
+                    ws.write(current_row, 1, room_name_clean, fmt_left)
+                    ws.write(current_row, 2, row["Specification"], fmt_left)
+
+                    for day_col_idx, day_label in enumerate(day_columns, 3):
+                        day_result = row["days"].get(day_label, "-")
+                        is_error = isinstance(day_result, str) and day_result.strip().startswith("Error:")
+                        ws.write(current_row, day_col_idx, day_result, fmt_error if is_error else fmt_left)
                     current_row += 1
         except Exception as excel_err:
             audit_trail.log_event("EXCEL_ERROR", f"Failed to write Excel report: {str(excel_err)}")
@@ -882,8 +1103,12 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
             audit_trail.log_event("PLOT_ERROR", f"Chart computation failed: {str(plot_err)}")
             plot_result = {"error": str(plot_err)}
 
+        if isinstance(plot_result, dict):
+            plot_result['room_errors'] = room_errors
+
         return output_path, log_stream.getvalue(), plot_result
     except Exception as e:
+        print(f"ERROR: {str(e)}")
         traceback.print_exc(file=log_stream)
         audit_trail.log_event("ANALYSIS_FAILED", f"Error: {str(e)}")
         return None, log_stream.getvalue(), None
@@ -896,7 +1121,7 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
 
 import glob as _glob
 
-def prepare_df_phase2(raw_data_path, room_id=None):
+def prepare_df_phase2(raw_data_path, room_id=None, setpoint_df=None):
     """Read Phase 2 EMS CSV files (separate RMT/RMH/RDP) and merge into unified DataFrame.
     Returns (room_id, df) where df has columns: DateTime, Temperature, Humidity, Pressure.
     """
@@ -919,8 +1144,24 @@ def prepare_df_phase2(raw_data_path, room_id=None):
     rmh_files = _find('RMH')
     rdp_files = _find('RDP')
 
+    # Dynamic limits verification
+    expected_params = {'Temperature'}
+    if setpoint_df is not None and room_id is not None:
+        row_sp = setpoint_df[setpoint_df['Room_number'].astype(str) == room_id]
+        if not row_sp.empty:
+            humidity_has_spec = (not pd.isna(row_sp['Humidity_Low_Limit'].iloc[0])) and (not pd.isna(row_sp['Humidity_High_Limit'].iloc[0]))
+            if humidity_has_spec:
+                expected_params.add('Humidity')
+            pressure_has_spec = (not pd.isna(row_sp['Pressure_Low_Limit'].iloc[0])) and (not pd.isna(row_sp['Pressure_High_Limit'].iloc[0]))
+            if pressure_has_spec:
+                expected_params.add('Pressure')
+
     if not rmt_files:
         raise ValueError(f"ERR-005: No Temperature file (_RMT_) found in {raw_data_path} for {room_id}")
+    if 'Humidity' in expected_params and not rmh_files:
+        raise ValueError(f"ERR-005: No Humidity file (_RMH_) found in {raw_data_path} for {room_id}")
+    if 'Pressure' in expected_params and not rdp_files:
+        raise ValueError(f"ERR-005: No Pressure file (_RDP_) found in {raw_data_path} for {room_id}")
 
     # Room ID = prefix before '_RMT_' in the first RMT filename
     r_id = room_id if room_id else os.path.basename(rmt_files[0]).split('_RMT_')[0]
@@ -940,12 +1181,28 @@ def prepare_df_phase2(raw_data_path, room_id=None):
                 # Standardize DateTime index by rounding to nearest minute to eliminate seconds-drift
                 df['DateTime'] = df['DateTime'].dt.round('min')
                 df[col_name] = pd.to_numeric(df[col_name], errors='coerce')
+                
+                # Cut off the last row of every individual file to avoid next-day 00:00 duplication
+                if len(df) > 1:
+                    df = df.iloc[:-1]
+                
                 dfs.append(df[['DateTime', col_name]])
             except Exception as e:
                 audit_trail.log_event("WARNING", f"Phase2 read error: {os.path.basename(f)} — {str(e)}")
         if not dfs:
             return pd.DataFrame(columns=['DateTime', col_name])
         result = pd.concat(dfs, ignore_index=True)
+        if result['DateTime'].duplicated().any():
+            dup_series = result[result['DateTime'].duplicated()]['DateTime'].dropna()
+            if not dup_series.empty:
+                dup_series_sorted = dup_series.sort_values()
+                dup_count = len(dup_series_sorted)
+                dup_start = dup_series_sorted.iloc[0].strftime('%Y-%m-%d %H:%M')
+                dup_stop = dup_series_sorted.iloc[-1].strftime('%Y-%m-%d %H:%M')
+                f_names = [os.path.basename(f) for f in file_list]
+                warn_msg = f"[WARNING] ERR-008: Duplicate Timestamps Detected in Phase 2 {col_name} files: {f_names} for Room {r_id}. Found {dup_count:,} duplicate timestamps from {dup_start} to {dup_stop}. Dropping duplicates and keeping the first record."
+                print(warn_msg)
+                audit_trail.log_event("DUPLICATE_TIMESTAMPS_WARN", f"Room: {r_id} ({col_name}) | Files: {f_names} | Duplicates: {dup_count} records from {dup_start} to {dup_stop} | Action: Dropped subsequent records (ERR-008)")
         return result.drop_duplicates('DateTime').sort_values('DateTime').reset_index(drop=True)
 
     df_t = _read_files(rmt_files, 'Temperature')
@@ -975,16 +1232,19 @@ def prepare_df_phase2(raw_data_path, room_id=None):
 
 
 def scan_phase2_rooms(folder_path):
-    """Recursively walk folder tree looking for any directory that contains _RMT_ files.
+    """Recursively walk folder tree looking for any directory that contains _RMT_/_RMH_/_RDP_ files.
     Returns {room_id: dir_path} regardless of how deep the Raw Data folder is.
     """
     room_map = {}
     for root, dirs, files in os.walk(folder_path):
-        rmt_files = [f for f in files if '_RMT_' in f and f.lower().endswith('.csv')]
-        for f in rmt_files:
-            room_id = f.split('_RMT_')[0]
-            if room_id not in room_map:
-                room_map[room_id] = folder_path
+        for f in files:
+            if f.lower().endswith('.csv'):
+                for suffix in ['_RMT_', '_RMH_', '_RDP_']:
+                    if suffix in f:
+                        room_id = f.split(suffix)[0]
+                        if room_id not in room_map:
+                            room_map[room_id] = folder_path
+                        break
     return room_map
 
 
@@ -992,17 +1252,15 @@ def get_file_date_range_phase2(raw_data_path, room_id=None):
     """Get combined date range from all CSV files in a Phase 2 folder (any depth)."""
     all_dates = []
     all_files = []
-    prefix = f"{room_id}_RMT_" if room_id else "_RMT_"
-    prefix_lower = prefix.lower()
+    suffixes = ['_RMT_', '_RMH_', '_RDP_']
     for root, _, files in os.walk(raw_data_path):
         for f in files:
             if f.lower().endswith('.csv'):
-                if room_id:
-                    if f.lower().startswith(prefix_lower):
+                for suffix in suffixes:
+                    prefix = f"{room_id}{suffix}" if room_id else suffix
+                    if prefix.lower() in f.lower():
                         all_files.append(os.path.join(root, f))
-                else:
-                    if '_rmt_' in f.lower():
-                        all_files.append(os.path.join(root, f))
+                        break
     for f in all_files:
         try:
             df = pd.read_csv(f, sep=';', skiprows=4, header=0,
@@ -1030,7 +1288,21 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
         except FileNotFoundError:
             raise ValueError("ERR-002: Limit File Not Found")
 
+        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
+        if missing_cols:
+            raise ValueError(f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}")
+
         all_corridor_rooms = set(setpoint_df['Room_Pressure_Comparison'].dropna().astype(str).unique()) if 'Room_Pressure_Comparison' in setpoint_df.columns else set()
+        needed_rooms = set(selected_rooms) if selected_rooms else set()
+        if selected_rooms:
+            for r in selected_rooms:
+                sp_row = setpoint_df[setpoint_df['Room_number'].astype(str) == r]
+                if not sp_row.empty and 'Room_Pressure_Comparison' in setpoint_df.columns:
+                    comp_val = sp_row['Room_Pressure_Comparison'].iloc[0]
+                    if not pd.isna(comp_val):
+                        needed_rooms.add(str(comp_val))
+
         tick_mark, cross_mark = 'Passed', 'Out of spec'
         start_dt = pd.to_datetime(start_date).tz_localize(None) if start_date else None
         end_dt   = pd.to_datetime(end_date).tz_localize(None)   if end_date   else None
@@ -1038,21 +1310,23 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
         limit_hash = get_file_hash(setpoint_path)
         audit_trail.log_event("ANALYSIS_START", f"[Phase2] Folder: {folder_path} | Limit_Hash: {limit_hash}")
 
+        room_errors = {}
+
         # --- Scan all rooms in folder tree ---
         room_scan = scan_phase2_rooms(folder_path)  # {room_id: raw_data_path}
 
-        # --- Load all selected rooms upfront ---
+        # --- Load all selected/needed rooms upfront ---
         room_full_dfs  = {}   # {room_id: full_range_df}
         room_sensors   = {}   # {room_id: set of available sensor names}
         failed_rooms   = {}   # {room_id: error_msg}
 
         for room_id, raw_data_path in room_scan.items():
-            if selected_rooms and room_id not in selected_rooms:
+            if needed_rooms and room_id not in needed_rooms:
                 continue
             if setpoint_df[setpoint_df['Room_number'].astype(str) == room_id].empty:
                 continue
             try:
-                _, df, sensors = prepare_df_phase2(raw_data_path, room_id=room_id)
+                _, df, sensors = prepare_df_phase2(raw_data_path, room_id=room_id, setpoint_df=setpoint_df)
                 room_full_dfs[room_id] = df
                 room_sensors[room_id]  = sensors
                 prefix = f"{room_id}_"
@@ -1071,6 +1345,30 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                 audit_trail.log_event("FILE_ERROR", f"[Phase2] Room: {room_id} | Error: {str(e)}")
                 failed_rooms[room_id] = str(e)
 
+        # GxP Upfront Validation: Verify all selected rooms have valid, complete folders and files (ERR-005)
+        for room_id in (selected_rooms or []):
+            if setpoint_df[setpoint_df['Room_number'].astype(str) == room_id].empty:
+                continue
+            
+            # Check folder existence
+            if room_id not in room_scan:
+                raise ValueError(f"ERR-005: Raw data folder not found in {folder_path} for Room {room_id}")
+            
+            # Check file presence and completeness
+            raw_data_path = room_scan[room_id]
+            if room_id in failed_rooms:
+                err_msg = failed_rooms[room_id]
+                if not err_msg.startswith("ERR-"):
+                    raise ValueError(f"ERR-005: Error parsing Room {room_id}: {err_msg}")
+                raise ValueError(err_msg)
+            
+            if room_id not in room_full_dfs:
+                raise ValueError(f"ERR-005: Raw data files not found in {raw_data_path} for Room {room_id}")
+
+        if not room_full_dfs and not failed_rooms:
+            audit_trail.log_event("ANALYSIS_FAILED", "ERR-010: No Matching Files Found matching criteria.")
+            raise ValueError("ERR-010: No Matching Files Found matching criteria.")
+
         report_data = []
         all_room_dfs = {}  # for chart — accumulate day-filtered slices
 
@@ -1078,6 +1376,8 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
         for current_date in pd.date_range(start_dt.date(), end_dt.date()):
             day_start = pd.Timestamp(current_date).tz_localize(None)
             day_end   = day_start + pd.Timedelta(hours=23, minutes=55)
+            day_analysis_start = max(day_start, start_dt)
+            day_analysis_end = min(day_end, end_dt)
 
             # Build day-filtered cache for analysis and corridor comparison
             day_cache = {}
@@ -1094,7 +1394,17 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
             print(f"\n============================================================")
             print(f" DATE: {current_date.strftime('%Y-%m-%d')}")
             print(f"============================================================\n")
-            report_data.append({"is_date_header": True, "date_text": f"DATE: {current_date.strftime('%Y-%m-%d')}"})
+            # Prefer actual data time span from day cache; fallback to analysis window.
+            actual_day_start = day_analysis_start
+            actual_day_end = day_analysis_end
+            if day_cache:
+                actual_day_start = min(df['DateTime'].min() for df in day_cache.values() if not df.empty)
+                actual_day_end = max(df['DateTime'].max() for df in day_cache.values() if not df.empty)
+            report_data.append({
+                "is_date_header": True,
+                "date_text": f"DATE: {current_date.strftime('%Y-%m-%d')}",
+                "day_column_label": f"{current_date.strftime('%Y-%m-%d')} ({actual_day_start.strftime('%H:%M')}-{actual_day_end.strftime('%H:%M')})"
+            })
 
             _total_day = len(rooms_for_day)
             for _day_idx, room_num in enumerate(rooms_for_day, 1):
@@ -1104,10 +1414,11 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                     rname_err = str(sp_err['Room_name'].iloc[0]) if not sp_err.empty and not pd.isna(sp_err['Room_name'].iloc[0]) else "N/A"
                     print(f"[ERROR] Skipping Room {room_num} ({rname_err}): {failed_rooms[room_num]}")
                     audit_trail.log_event("ROOM_SKIPPED_ERROR", f"[Phase2] Room: {room_num} | Reason: {failed_rooms[room_num]}")
+                    room_errors[room_num] = failed_rooms[room_num]
                     report_data.append({
                         "is_date_header": False, "is_error": True,
                         "Room no.": room_num, "Room name": rname_err,
-                        "Speification": "N/A",
+                        "Specification": "N/A",
                         "Analysis results": f"Error: {failed_rooms[room_num]}"
                     })
                     continue
@@ -1117,188 +1428,40 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                     setpoint_row = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]
                     if setpoint_row.empty:
                         continue
-
-                    try:
-                        T_lim = float(setpoint_row['Temperature_Limit'].iloc[0]) if not pd.isna(setpoint_row['Temperature_Limit'].iloc[0]) else 100
-                    except (ValueError, TypeError):
-                        raise ValueError("ERR-003: Invalid Configuration - High Limit must be a number")
-
-                    try:
-                        humidity_has_spec = (not pd.isna(setpoint_row['Humidity_Low_Limit'].iloc[0])) and (not pd.isna(setpoint_row['Humidity_High_Limit'].iloc[0]))
-                        H_low  = float(setpoint_row['Humidity_Low_Limit'].iloc[0])  if humidity_has_spec else 0
-                        H_high = float(setpoint_row['Humidity_High_Limit'].iloc[0]) if humidity_has_spec else 100
-                        P_low  = float(setpoint_row['Pressure_Low_Limit'].iloc[0])  if not pd.isna(setpoint_row['Pressure_Low_Limit'].iloc[0])  else None
-                        P_high = float(setpoint_row['Pressure_High_Limit'].iloc[0]) if not pd.isna(setpoint_row['Pressure_High_Limit'].iloc[0]) else None
-                        if humidity_has_spec and H_high < H_low:
-                            raise ValueError("ERR-006: Configuration Error - High Limit cannot be lower than Low Limit.")
-                        if P_low is not None and P_high is not None and P_high < P_low:
-                            raise ValueError("ERR-006: Configuration Error - Pressure High Limit cannot be lower than Low Limit.")
-                    except (ValueError, TypeError) as e:
-                        if "ERR-006" in str(e): raise e
-                        raise ValueError("ERR-003: Invalid Configuration - Limit values must be numeric")
-
+                    
                     df = day_cache.get(room_num)
                     if df is None:
                         continue
-
-                    df = df[(df['DateTime'] >= start_dt) & (df['DateTime'] <= end_dt)].copy()
-                    if df.empty:
-                        continue
-
-                    # --- Temperature ---
-                    t_df_all = df[df['Temperature'] > T_lim]
-                    t_25     = t_df_all[t_df_all['DateTime'].diff(5).dt.total_seconds() == 1500]
-                    t_idx    = sorted(list(set([j for i in t_25.index for j in range(max(i-5, 0), i+1)])))
-                    temp_res = f'Temperature: {tick_mark}'
-                    if t_idx:
-                        temp_res = [f'Temperature: {cross_mark}']
-                        for i in find_continuous_ranges(t_idx):
-                            t_range = df.loc[i[0]:i[1]]
-                            temp_res.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({t_range["Temperature"].min()} to {t_range["Temperature"].max()} °C)')
-                        temp_res = ''.join(temp_res)
-
-                    t_loss_idx = df[df['Temperature'].isna()].index.tolist()
-                    if t_loss_idx:
-                        loss_lines = [f'\n{df.loc[i[0]:i[1]]["DateTime"].dt.strftime("%H:%M").iloc[0]} to {df.loc[i[0]:i[1]]["DateTime"].dt.strftime("%H:%M").iloc[-1]}' for i in find_continuous_ranges(t_loss_idx, min_length=1)]
-                        if temp_res == f'Temperature: {tick_mark}':
-                            temp_res = f'Temperature: Data Loss' + ''.join(loss_lines)
-                        else:
-                            temp_res = temp_res.replace(f'Temperature: {cross_mark}', f'Temperature: {cross_mark} & Data Loss') + ''.join(loss_lines)
-
-                    # --- Humidity ---
-                    if not humidity_has_spec:
-                        hum_res = f'\nHumidity: N/A'
-                    else:
-                        h_low_idx  = sorted(list(set([j for i in list(df[df['Humidity'] < H_low]['DateTime'].diff(5).dt.total_seconds()[lambda s: s == 1500].index)  for j in range(max(i-5, 0), i+1)])))
-                        h_high_idx = sorted(list(set([j for i in list(df[df['Humidity'] > H_high]['DateTime'].diff(5).dt.total_seconds()[lambda s: s == 1500].index) for j in range(max(i-5, 0), i+1)])))
-                        hum_res = f'\nHumidity: {tick_mark}'
-                        if h_low_idx or h_high_idx:
-                            hum_res = [f'\nHumidity: {cross_mark}']
-                            for idx_list in [h_high_idx, h_low_idx]:
-                                for i in find_continuous_ranges(idx_list):
-                                    h_range = df.loc[i[0]:i[1]]
-                                    hum_res.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} ({h_range["Humidity"].min()} to {h_range["Humidity"].max()} %RH)')
-                            hum_res = ''.join(hum_res)
-
-                        h_loss_idx = df[df['Humidity'].isna()].index.tolist()
-                        if h_loss_idx:
-                            loss_lines = [f'\n{df.loc[i[0]:i[1]]["DateTime"].dt.strftime("%H:%M").iloc[0]} to {df.loc[i[0]:i[1]]["DateTime"].dt.strftime("%H:%M").iloc[-1]}' for i in find_continuous_ranges(h_loss_idx, min_length=1)]
-                            if hum_res == f'\nHumidity: {tick_mark}':
-                                hum_res = f'\nHumidity: Data Loss' + ''.join(loss_lines)
-                            else:
-                                hum_res = hum_res.replace(f'\nHumidity: {cross_mark}', f'\nHumidity: {cross_mark} & Data Loss') + ''.join(loss_lines)
-
-                    # --- Pressure ---
-                    if P_low is None or P_high is None:
-                        press_res = f'\nPressure: N/A'
-                    else:
-                        is_high_pressure = (P_low >= 35)
-                        p_low_idx  = sorted(list(set([j for i in list(df[df['Pressure'] < P_low]['DateTime'].diff(5).dt.total_seconds()[lambda s: s == 1500].index)  for j in range(max(i-5, 0), i+1)])))
-                        p_high_idx = sorted(list(set([j for i in list(df[df['Pressure'] > P_high]['DateTime'].diff(5).dt.total_seconds()[lambda s: s == 1500].index) for j in range(max(i-5, 0), i+1)])))
-                        press_res = f'\nPressure: {tick_mark}'
-                        all_violation_intervals = []
-
-                        # Corridor comparison — look up room from cache directly
-                        try:
-                            compare_room_val = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]['Room_Pressure_Comparison'].values[0]
-                            math_pressure_room = str(compare_room_val) if not pd.isna(compare_room_val) else room_num
-                        except (IndexError, KeyError):
-                            math_pressure_room = room_num
-                        math_pressure_df = day_cache.get(math_pressure_room, pd.DataFrame())
-
-                        for viol_idx_list, viol_label, limit_val in [(p_low_idx, "Low", P_low), (p_high_idx, "High", P_high)]:
-                            if not viol_idx_list:
-                                continue
-                            has_corridor = (room_num != math_pressure_room and not math_pressure_df.empty)
-                            for i in find_continuous_ranges(viol_idx_list):
-                                p_range = df.loc[i[0]:i[1]]
-                                corr_status = ""
-                                is_actual_violation = True
-                                if has_corridor:
-                                    comp = pd.merge_asof(
-                                        p_range[['DateTime', 'Pressure']].sort_values('DateTime'),
-                                        math_pressure_df[['DateTime', 'Pressure']].sort_values('DateTime'),
-                                        on='DateTime', direction='nearest', tolerance=pd.Timedelta('60s'),
-                                        suffixes=(f'_{room_num}', f'_{math_pressure_room}')
-                                    ).dropna(subset=[f'Pressure_{math_pressure_room}'])
-                                    if not comp.empty:
-                                        room_over_corridor = comp[f'Pressure_{room_num}'].mean() - comp[f'Pressure_{math_pressure_room}'].mean() >= 0
-                                        if is_high_pressure:
-                                            corr_status = f" over {math_pressure_room}" if room_over_corridor else f" under {math_pressure_room}"
-                                            is_actual_violation = not room_over_corridor
-                                        else:
-                                            corr_status = f" over {math_pressure_room}" if room_over_corridor else f" within {math_pressure_room}"
-                                            is_actual_violation = room_over_corridor
-
-                                rev_lines = []
-                                if room_num in all_corridor_rooms:
-                                    rev_lines = check_reverse_violations(room_num, df, i[0], i[1], setpoint_df, selected_rooms, day_cache)
-
-                                interval_text = (
-                                    f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to '
-                                    f'{p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} '
-                                    f'({p_range["Pressure"].min():.2f} to {p_range["Pressure"].max():.2f} Pa)'
-                                    f'{corr_status}' + ''.join(rev_lines)
-                                )
-                                all_violation_intervals.append((p_range['DateTime'].iloc[0], interval_text, is_actual_violation))
-
-                        if all_violation_intervals:
-                            all_violation_intervals.sort(key=lambda x: x[0])
-                            has_real_violation = any(v[2] for v in all_violation_intervals)
-                            press_res = [f'\nPressure: {cross_mark if has_real_violation else tick_mark}']
-                            for _, interval_text, _ in all_violation_intervals:
-                                press_res.append(interval_text)
-                            press_res = ''.join(press_res)
-
-                        # Pressure data loss (includes case where no RDP file → all NaN)
-                        p_loss_idx = df[df['Pressure'].isna()].index.tolist()
-                        if p_loss_idx:
-                            loss_lines = [f'\n{df.loc[i[0]:i[1]]["DateTime"].dt.strftime("%H:%M").iloc[0]} to {df.loc[i[0]:i[1]]["DateTime"].dt.strftime("%H:%M").iloc[-1]}' for i in find_continuous_ranges(p_loss_idx, min_length=1)]
-                            if press_res == f'\nPressure: {tick_mark}':
-                                press_res = f'\nPressure: Data Loss' + ''.join(loss_lines)
-                            elif press_res.startswith(f'\nPressure: {cross_mark}'):
-                                press_res = press_res.replace(f'\nPressure: {cross_mark}', f'\nPressure: {cross_mark} & Data Loss') + ''.join(loss_lines)
-
-                    # --- Detail log (mirrors Phase I output) ---
-                    if t_idx:
-                        print(f"Temperature Violations Found for {room_num}: (Limit: ≤ {T_lim} °C)")
-                        _print_df(df.loc[t_idx][['DateTime', 'Temperature']])
-                        print("-------------------------------")
-                    if t_loss_idx:
-                        print(f"Temperature Data Loss Found for {room_num}:")
-                        _print_df(df.loc[t_loss_idx][['DateTime', 'Temperature']])
-                        print("-------------------------------")
-                    if humidity_has_spec:
-                        if h_high_idx:
-                            print(f"Humidity High Violations Found for {room_num}: (Limit: > {H_high} %RH)")
-                            _print_df(df.loc[h_high_idx][['DateTime', 'Humidity']])
-                            print("-------------------------------")
-                        if h_low_idx:
-                            print(f"Humidity Low Violations Found for {room_num}: (Limit: < {H_low} %RH)")
-                            _print_df(df.loc[h_low_idx][['DateTime', 'Humidity']])
-                            print("-------------------------------")
-                        if h_loss_idx:
-                            print(f"Humidity Data Loss Found for {room_num}:")
-                            _print_df(df.loc[h_loss_idx][['DateTime', 'Humidity']])
-                            print("-------------------------------")
-                    if P_low is not None and P_high is not None:
-                        for viol_idx_list2, viol_label2 in [(p_low_idx, "Low"), (p_high_idx, "High")]:
-                            if viol_idx_list2:
-                                print(f"{viol_label2} Pressure Violations Found for {room_num}: (Limit: {P_low} - {P_high} Pa)")
-                                _print_df(df.loc[viol_idx_list2][['DateTime', 'Pressure']])
-                                print("-------------------------------")
-                        if p_loss_idx:
-                            print(f"Pressure Data Loss Found for {room_num}:")
-                            _print_df(df.loc[p_loss_idx][['DateTime', 'Pressure']])
-                            print("-------------------------------")
-
-                    humidity_spec = "N/A" if not humidity_has_spec else f"{H_low} - {H_high} %RH"
-                    pressure_spec = "N/A" if (P_low is None or P_high is None) else f"{P_low} - {P_high} Pa"
+                    
+                    # Verify corridor comparison data is present (ERR-011)
+                    compare_room_val = setpoint_row['Room_Pressure_Comparison'].iloc[0] if 'Room_Pressure_Comparison' in setpoint_row.columns else None
+                    if not pd.isna(compare_room_val) and str(compare_room_val).strip() != "" and str(compare_room_val) != room_num:
+                        corr_room_id = str(compare_room_val)
+                        if corr_room_id not in day_cache or day_cache[corr_room_id].empty:
+                            audit_trail.log_event("ALARM_TRIGGERED", f"Action: analyze | Code: ERR-011 | Msg: Missing corridor data {corr_room_id} for Room {room_num}")
+                            raise ValueError(f"ERR-011: Missing Corridor Data - Room {room_num} requires comparison with corridor room {corr_room_id}, but corridor data is missing.")
+                    
+                    res = _analyze_single_room_core(
+                        df, 
+                        room_num, 
+                        setpoint_row, 
+                        tick_mark, 
+                        cross_mark, 
+                        all_corridor_rooms, 
+                        day_cache, 
+                        selected_rooms, 
+                        setpoint_df,
+                        start_dt,
+                        end_dt
+                    )
+                    if res is None: continue
+                    spec_txt, analysis_res_txt = res
+                    
                     report_data.append({
                         "is_date_header": False,
                         "Room no.": room_num, "Room name": setpoint_row['Room_name'].iloc[0],
-                        "Speification": f"Temperature: ≤ {T_lim}°C\nHumidity: {humidity_spec}\nPressure: {pressure_spec}",
-                        "Analysis results": temp_res + hum_res + press_res
+                        "Specification": spec_txt,
+                        "Analysis results": analysis_res_txt
                     })
                     print(f"[{_day_idx}/{_total_day}] Completed Room: {room_num}\n--------------------")
 
@@ -1307,6 +1470,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                     print(error_msg)
                     traceback.print_exc(file=sys.stdout)
                     audit_trail.log_event("ROOM_ERROR", f"[Phase2] Room: {room_num} | Error: {str(e)}")
+                    room_errors[room_num] = str(e)
                     try:
                         sp_err2 = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]
                         rname_err2 = str(sp_err2['Room_name'].iloc[0]) if not sp_err2.empty and not pd.isna(sp_err2['Room_name'].iloc[0]) else "N/A"
@@ -1315,49 +1479,47 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                     report_data.append({
                         "is_date_header": False, "is_error": True,
                         "Room no.": room_num, "Room name": rname_err2,
-                        "Speification": "N/A",
+                        "Specification": "N/A",
                         "Analysis results": f"Error: {str(e)}"
                     })
 
-        # --- Excel Export ---
+        # --- Excel Export (wide day columns) ---
         output_path = os.path.join('reports', f"AQR_Report_P2_{time.strftime('%Y%m%d_%H%M%S')}.xlsx")
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         try:
             with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
                 wb = writer.book
                 ws = wb.add_worksheet('Report')
                 fmt_header      = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#b0b0b0'})
-                fmt_date        = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'bg_color': '#e2e8f0', 'font_size': 12})
                 fmt_center      = wb.add_format({'font_name': 'Times New Roman', 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True})
                 fmt_left        = wb.add_format({'font_name': 'Times New Roman', 'border': 1, 'align': 'left',   'valign': 'vcenter', 'text_wrap': True})
                 fmt_top         = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'font_size': 11, 'align': 'center', 'valign': 'vcenter', 'border': 1, 'bg_color': '#b0b0b0'})
                 fmt_error       = wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'left',   'valign': 'vcenter', 'text_wrap': True, 'bg_color': '#FFE0E0', 'font_color': '#CC0000'})
                 fmt_error_center= wb.add_format({'font_name': 'Times New Roman', 'bold': True, 'border': 1, 'align': 'center', 'valign': 'vcenter', 'text_wrap': True, 'bg_color': '#FFE0E0', 'font_color': '#CC0000'})
+                day_columns, room_rows = build_daily_wide_rows(report_data)
+                headers = ["Room no.", "Room name", "Specification"] + day_columns
+                last_col = len(headers) - 1
                 if start_dt and end_dt:
-                    ws.merge_range('A1:C1', f'Period analyzed: {start_dt.strftime("%Y-%m-%d %H:%M")} to {end_dt.strftime("%Y-%m-%d %H:%M")}', fmt_top)
-                ws.write('D1', f'Software Version: v1.1.0\nGenerated: {time.strftime("%Y-%m-%d %H:%M")}', fmt_center)
-                headers = ["Room no.", "Room name", "Specification", "Analysis results"]
+                    ws.merge_range(0, 0, 0, max(2, last_col - 1), f'Period analyzed: {start_dt.strftime("%Y-%m-%d %H:%M")} to {end_dt.strftime("%Y-%m-%d %H:%M")}', fmt_top)
+                ws.write(0, last_col, f'Software Version: v1.1.0\nGenerated: {time.strftime("%Y-%m-%d %H:%M")}', fmt_center)
                 for col, val in enumerate(headers):
                     ws.write(1, col, val, fmt_header)
-                ws.set_column('A:A', 12); ws.set_column('B:B', 35); ws.set_column('C:C', 25); ws.set_column('D:D', 45)
-                ws.freeze_panes(2, 0)
+                ws.set_column('A:A', 12); ws.set_column('B:B', 35); ws.set_column('C:C', 25)
+                for day_col_idx in range(3, len(headers)):
+                    ws.set_column(day_col_idx, day_col_idx, 45)
+                ws.freeze_panes(2, 3)
                 current_row = 2
-                for item in report_data:
-                    if item["is_date_header"]:
-                        ws.merge_range(current_row, 0, current_row, 3, item["date_text"], fmt_date)
-                    elif item.get("is_error"):
-                        room_no_clean = clean_room_num_or_name(item["Room no."])
-                        room_name_clean = clean_room_num_or_name(item["Room name"])
-                        ws.write(current_row, 0, room_no_clean,        fmt_error_center)
-                        ws.write(current_row, 1, room_name_clean,       fmt_error)
-                        ws.write(current_row, 2, item["Speification"],    fmt_error)
-                        ws.write(current_row, 3, item["Analysis results"],fmt_error)
-                    else:
-                        room_no_clean = clean_room_num_or_name(item["Room no."])
-                        room_name_clean = clean_room_num_or_name(item["Room name"])
-                        ws.write(current_row, 0, room_no_clean,        fmt_center)
-                        ws.write(current_row, 1, room_name_clean,       fmt_left)
-                        ws.write(current_row, 2, item["Speification"],    fmt_left)
-                        ws.write(current_row, 3, item["Analysis results"],fmt_left)
+                for room_no in sorted(room_rows.keys()):
+                    row = room_rows[room_no]
+                    room_no_clean = clean_room_num_or_name(row["Room no."])
+                    room_name_clean = clean_room_num_or_name(row["Room name"])
+                    ws.write(current_row, 0, room_no_clean, fmt_center)
+                    ws.write(current_row, 1, room_name_clean, fmt_left)
+                    ws.write(current_row, 2, row["Specification"], fmt_left)
+                    for day_col_idx, day_label in enumerate(day_columns, 3):
+                        day_result = row["days"].get(day_label, "-")
+                        is_error = isinstance(day_result, str) and day_result.strip().startswith("Error:")
+                        ws.write(current_row, day_col_idx, day_result, fmt_error if is_error else fmt_left)
                     current_row += 1
         except Exception as excel_err:
             audit_trail.log_event("EXCEL_ERROR", f"[Phase2] Failed to write Excel report: {str(excel_err)}")
@@ -1380,9 +1542,13 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
             audit_trail.log_event("PLOT_ERROR", f"[Phase2] Chart computation failed: {str(plot_err)}")
             plot_result = {"error": str(plot_err)}
 
+        if isinstance(plot_result, dict):
+            plot_result['room_errors'] = room_errors
+
         return output_path, log_stream.getvalue(), plot_result
 
     except Exception as e:
+        print(f"ERROR: {str(e)}")
         traceback.print_exc(file=log_stream)
         audit_trail.log_event("ANALYSIS_FAILED", f"[Phase2] Error: {str(e)}")
         return None, log_stream.getvalue(), None

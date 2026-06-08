@@ -119,6 +119,8 @@ async function checkReadyForScan() {
                     showErrorModal('Invalid File Format', 'ERR-005', data.error);
                 } else if (data.error.includes('ERR-006')) {
                     showErrorModal('Logical Constraint Error', 'ERR-006', data.error);
+                } else if (data.error.includes('ERR-010')) {
+                    showErrorModal('No Matching Files Found', 'ERR-010', data.error);
                 } else {
                     showErrorModal('Error', 'ERR-UNKNOWN', data.error);
                 }
@@ -170,6 +172,8 @@ document.getElementById('loadRoomsBtn').addEventListener('click', async () => {
         if (data.error) {
             if (data.error.includes('ERR-002')) {
                 showErrorModal('Limit File Error', 'ERR-002', data.error);
+            } else if (data.error.includes('ERR-009')) {
+                showErrorModal('Invalid Limit File', 'ERR-009', data.error);
             } else if (data.error.includes('ERR-006')) {
                 showErrorModal('Logical Constraint Error', 'ERR-006', data.error);
             } else {
@@ -377,13 +381,29 @@ document.getElementById('analyzeBtn').onclick = async () => {
                     else if (errMsg.includes('ERR-003')) showErrorModal('Invalid Configuration Error',   'ERR-003', errMsg);
                     else if (errMsg.includes('ERR-005')) showErrorModal('Invalid File Format',           'ERR-005', errMsg);
                     else if (errMsg.includes('ERR-006')) showErrorModal('Logical Constraint Error',      'ERR-006', errMsg);
+                    else if (errMsg.includes('ERR-007')) showErrorModal('Report Generation Failed',      'ERR-007', errMsg);
+                    else if (errMsg.includes('ERR-009')) showErrorModal('Invalid Limit File',           'ERR-009', errMsg);
                     else                                 showErrorModal('Analysis Error',                'ERR-UNKNOWN', errMsg);
                 } else {
                     const result = data.response || {};
                     if (result.warning) {
-                        msg.innerText = result.warning;
+                        msg.innerText = result.warning.length > 80 ? result.warning.slice(0, 80) + '...' : result.warning;
                         msg.style.color = '#f59e0b';
                         document.getElementById('statusIcon').style.background = '#f59e0b';
+                        
+                        // Check if warning contains room-level errors (ERR-001, ERR-003, ERR-005, ERR-006)
+                        const codesFound = [];
+                        ['ERR-001', 'ERR-003', 'ERR-005', 'ERR-006'].forEach(code => {
+                            if (result.warning.includes(code)) {
+                                codesFound.push(code);
+                            }
+                        });
+                        if (codesFound.length > 0) {
+                            showErrorModal('Room Analysis Warnings', codesFound.join(', '), result.warning);
+                        } else {
+                            // GAMP 5 compliance: Trigger Warning Modal Alert to ensure reviewer notices duplicate timestamps resolution
+                            showErrorModal('Duplicate Timestamps Warning', 'ERR-008', result.warning);
+                        }
                     } else {
                         msg.innerText = 'AQR Program: Analysis Successful!';
                         msg.style.color = '';
@@ -532,33 +552,53 @@ function renderTimelineChart(intervals) {
         return;
     }
 
-    // Only show rooms that actually appear in violation intervals
-    const violationRooms = [...new Set(intervals.map(inv => '\u200B' + inv.room_id))];
+    // Extract unique rooms to maintain 1 room = 1 row space
+    const violationRooms = [...new Set(intervals.map(inv => inv.room_id))];
     const N_TL = violationRooms.length;
-    // ROW_H must match line width*2 so bars fill their row
-    const ROW_H = 26;
-    const P = N_TL * ROW_H + 30; // Plotting area (bars + 30px rangeslider)
+    const ROW_H = 34; // Slightly taller rows to give offset lines breathing room
+    const P = N_TL * ROW_H + 30; // Plotting area
     const dynamicHeight = P + 80 + 65; // Plotting area + top margin + bottom margin
     chartDiv.style.height = dynamicHeight + 'px';
     const sliderThickness = 30 / P;
 
-    const typeColors = { 'Temperature': '#fbbf24', 'Humidity': '#3b82f6', 'Pressure': '#ef4444' };
-    const traces = intervals.map(inv => ({
-        x: [inv.start, inv.end], y: ['\u200B' + inv.room_id, '\u200B' + inv.room_id], name: inv.type,
-        mode: 'lines', line: { color: typeColors[inv.type] || '#6366f1', width: 13 },
-        customdata: [inv], hoverinfo: 'text',
-        hovertext: `<b>Room: ${inv.room_id}</b><br>Type: ${inv.type} (${inv.status})<br>Start: ${inv.start}<br>End: ${inv.end}<br>Duration: ${inv.duration} mins`,
-        showlegend: false
-    }));
+    // Map room IDs to numeric indices
+    const roomIndices = {};
+    violationRooms.forEach((room, idx) => {
+        roomIndices[room] = idx;
+    });
+
+    // Y-offsets within a single room row to show all 3 parameters in parallel lanes (no overlaps!)
+    const yOffsets = {
+        'Temperature': 0.22,  // Shifted up
+        'Humidity': 0.0,       // Centered
+        'Pressure': -0.22      // Shifted down
+    };
+    const typeColors = {
+        'Temperature': '#fbbf24', // Yellow
+        'Humidity': '#3b82f6',    // Blue
+        'Pressure': '#ef4444'      // Red
+    };
+
+    const traces = intervals.map(inv => {
+        const roomIdx = roomIndices[inv.room_id];
+        const yVal = roomIdx + (yOffsets[inv.type] || 0.0);
+        return {
+            x: [inv.start, inv.end], y: [yVal, yVal], name: inv.type,
+            mode: 'lines', line: { color: typeColors[inv.type] || '#6366f1', width: 8 }, // Increased from 6 to 8 for a slightly bolder, clearer appearance
+            customdata: [inv], hoverinfo: 'text',
+            hovertext: `<b>Room: ${inv.room_id}</b><br>Type: ${inv.type} (${inv.status})<br>Start: ${inv.start}<br>End: ${inv.end}<br>Duration: ${inv.duration} mins`,
+            showlegend: false
+        };
+    });
 
     ['Temperature', 'Humidity', 'Pressure'].forEach(type => {
-        traces.push({ x: [null], y: [violationRooms[0]], name: type, mode: 'lines', line: { color: typeColors[type], width: 10 }, showlegend: true });
+        traces.push({ x: [null], y: [0], name: type, mode: 'lines', line: { color: typeColors[type], width: 8 }, showlegend: true });
     });
 
     const layout = {
         height: dynamicHeight,
         template: document.body.getAttribute('data-theme') === 'dark' ? 'plotly_dark' : 'plotly_white',
-        margin: { t: 80, b: 65, l: 150, r: 150 },
+        margin: { t: 80, b: 65, l: 85, r: 90 },
         font: { family: 'Inter, sans-serif', color: document.body.getAttribute('data-theme') === 'dark' ? '#f1f5f9' : '#1e293b' },
         xaxis: {
             type: 'date', title: { text: 'Time', font: { size: 12, weight: 700 }, standoff: 20 }, automargin: true,
@@ -567,16 +607,16 @@ function renderTimelineChart(intervals) {
             rangeslider: { visible: true, bordercolor: '#e2e8f0', borderwidth: 1, thickness: sliderThickness }
         },
         yaxis: {
-            range: [N_TL - 0.5, -0.5],
-            type: 'category',
-            categoryorder: 'array',
-            categoryarray: violationRooms,
-            dtick: 1,
-            title: { text: 'Room ID', font: { size: 12, weight: 700 }, standoff: 30 }, automargin: true,
-            tickfont: { family: 'JetBrains Mono, monospace', size: 10, color: '#64748b' }
+            range: [N_TL - 0.5, -0.5], // Keep first room at the top
+            tickvals: violationRooms.map((_, idx) => idx),
+            ticktext: violationRooms.map(room => room + '    '), // Append trailing spaces for robust label-to-graph spacing
+            automargin: true,
+            tickfont: { family: 'JetBrains Mono, monospace', size: 10, color: '#64748b' },
+            zeroline: false, // Completely removes the black zero line from the numeric Y-axis!
+            tickpad: 15 // Pushes the Room ID labels left of the axis line
         },
         hovermode: 'closest',
-        legend: { orientation: 'v', x: 1.05, y: 1, xanchor: 'left', font: { size: 11, weight: 600 } }
+        legend: { orientation: 'v', x: 1.02, y: 1, xanchor: 'left', font: { size: 11, weight: 600 } }
     };
 
     Plotly.newPlot('violationTimelineChart', traces, layout, { responsive: false, displaylogo: false });

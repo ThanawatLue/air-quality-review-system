@@ -29,7 +29,7 @@ The Committee has specifically verified the mathematical exactness of the system
 This critical logic has been thoroughly confirmed by the analysis engine and formally verified through the OQ test protocol.
 
 SECTION 4: CONCLUSION AND AUTHORIZATION
-The AQR System (Version 1.1.0) is formally declared "Fit for Intended Use". The standalone program (`app.exe`) is safe, reliable, and officially authorized for production deployment in the live factory environment.
+The AQR System (Version 1.1.0) is formally declared "Fit for Intended Use". The standalone program (`AQR_Dashboard_v1.1.0.exe`) is safe, reliable, and officially authorized for production deployment in the live factory environment.
 
 ---
 **Final Project Sign-off**

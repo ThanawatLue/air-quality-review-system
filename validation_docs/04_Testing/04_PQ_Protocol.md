@@ -65,7 +65,7 @@ Objective:
 Verify application portability across local drives.
 Procedure:
 1.	Move the root folder to drive `D:\`.
-2.	Launch `app.exe` and process a test file.
+2.	Launch `AQR_Dashboard_v1.1.0.exe` and process a test file.
 Acceptance Criteria:
 •	Application launches and processes data without path-resolution errors.
 •	Audit trail correctly records the new path in its metadata header.

@@ -21,6 +21,14 @@
   - สร้างกราฟและรายงาน
 - **Dependencies**: pandas, plotly, openpyxl
 
+#### audit_trail.py
+- **คำอธิบาย**: โมดูลความปลอดภัยและระบบบันทึก Audit Trail ตามข้อกำหนด GAMP 5 และ 21 CFR Part 11
+- **หน้าที่**:
+  - บันทึกประวัติการทำงานของระบบ (Audit Trail Log) ในรูปแบบ JSONL
+  - สร้างและตรวจสอบ Cryptographic Hash-Chain (SHA-256) เพื่อยืนยันความสมบูรณ์ของข้อมูลและป้องกันการดัดแปลง (Tamper-Proof)
+  - ทำการตรวจสอบแบบ Pre-flight Verification ในตอนเริ่มต้นเซิร์ฟเวอร์
+- **Dependencies**: hashlib, json, datetime, os
+
 #### agent_module.py (ถูกลบออกแล้ว)
 - **คำอธิบาย**: โมดูล AI สำหรับการทบทวนข้อมูล
 - **สถานะ**: ถูก comment out และลบออกจากโปรเจกต์แล้ว
@@ -28,22 +36,20 @@
 
 ### 2. Configuration Files (ไฟล์การตั้งค่า)
 
-#### app.spec
+#### AQR_Dashboard_v1.1.0_Fix.spec
 - **คำอธิบาย**: Configuration file สำหรับ PyInstaller
 - **หน้าที่**: กำหนดวิธีการ build .exe
-- **สิ่งสำคัญ**: ระบุ data folders ที่ต้องรวม (templates, static, data)
+- **สิ่งสำคัญ**: ระบุ data folders ที่ต้องรวม (templates, static, data) และ documentation ต่าง ๆ
 
 #### requirements.txt
 - **คำอธิบาย**: รายชื่อ Python packages ที่จำเป็น
 - **หน้าที่**: ใช้สำหรับติดตั้ง dependencies อัตโนมัติ
 - **Dependencies หลัก**:
   - flask - Web framework
+  - waitress - Production WSGI server
   - pandas - Data processing
-  - google-genai - AI integration
-  - plotly - Data visualization
-  - python-docx - Document generation
-  - Pillow - Image processing
-  - openpyxl - Excel file handling
+  - openpyxl - Excel file handling (Read)
+  - xlsxwriter - Excel file handling (Write)
   - pyinstaller - Build tool
 
 ### 3. Data Folders (โฟลเดอร์ข้อมูล)
@@ -53,6 +59,7 @@
 - **ไฟล์ที่ต้องมี**:
   - `aqr.html` - หน้าหลัก Air Quality Review
   - `transform.html` - หน้า Data Transformation
+  - `audit_trail.html` - หน้าจัดการและแสดงผลข้อมูลประวัติระบบ (Audit Trail Viewer) ตามข้อกำหนด GAMP 5
   - `index.html` - หน้าแรก
 - **ไฟล์ที่ถูกลบ**:
   - `ai_review.html` - หน้า AI Review (ถูกลบออกแล้ว)
@@ -100,8 +107,9 @@ AirQualityReview_Project/
 │
 ├── app.py                      # ✅ ต้องมี - Main application
 ├── analysis_logic.py           # ✅ ต้องมี - Analysis module
+├── audit_trail.py              # ✅ ต้องมี - GAMP 5 Secure Audit Trail logic
 ├── agent_module.py             # ❌ ถูกลบ - AI module (removed)
-├── app.spec                    # ✅ ต้องมี - PyInstaller config
+├── AQR_Dashboard_v1.1.0_Fix.spec # ✅ ต้องมี - PyInstaller config
 ├── requirements.txt            # ✅ ต้องมี - Dependencies
 ├── README.md                   # ✅ แนะนำ - Documentation
 ├── BUILD_INSTRUCTIONS.md       # ✅ แนะนำ - Build guide
@@ -111,12 +119,16 @@ AirQualityReview_Project/
 ├── templates/                  # ✅ ต้องมี - HTML templates
 │   ├── aqr.html
 │   ├── transform.html
+│   ├── audit_trail.html       # ✅ ต้องมี - Audit Trail Dashboard page
 │   ├── ai_review.html         # ❌ ถูกลบ - AI Review page (removed)
 │   └── index.html
 │
 ├── static/                     # ✅ ต้องมี - CSS & JS
 │   ├── style.css
 │   └── script.js
+│
+├── logs/                       # ✅ ต้องมี - GxP Secure Log Directory
+│   └── audit_trail.log        # 🔒 ตารางบันทึก Audit Trail เข้ารหัส Hash-Chained
 │
 └── data/                       # ✅ ต้องมี - Data files
     ├── SetPointLimit.xlsx
@@ -132,7 +144,7 @@ AirQualityReview_Project/
 
 2. **Build .exe**:
    ```bash
-   pyinstaller app.spec
+   pyinstaller AQR_Dashboard_v1.1.0_Fix.spec
    ```
    หรือ
    ```bash
@@ -140,15 +152,15 @@ AirQualityReview_Project/
    ```
 
 3. **ไฟล์ Output**:
-   - `dist/app.exe` - ไฟล์ .exe ที่สร้างเสร็จ
+   - `dist/AQR_Dashboard_v1.1.0_Fix.exe` - ไฟล์ .exe ที่สร้างเสร็จ
 
 ## การตรวจสอบก่อน Build
 
 - [ ] มีไฟล์ `app.py`, `analysis_logic.py`
 - [ ] AI module (agent_module.py) ถูกลบออกแล้ว
 - [ ] มีโฟลเดอร์ `templates/`, `static/`, `data/`
-- [ ] มีไฟล์ `app.spec`
-- [ ] มีไฟล์ `requirements.txt` (AI dependencies ถูก comment out)
+- [ ] มีไฟล์ `AQR_Dashboard_v1.1.0_Fix.spec`
+- [ ] มีไฟล์ `requirements.txt` (ไม่มี AI dependencies)
 - [ ] ติดตั้ง dependencies ครบถ้วน
 - [ ] ทดสอบรัน `python app.py` ได้สำเร็จ
 

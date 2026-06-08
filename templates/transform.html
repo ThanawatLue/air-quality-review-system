@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Data Transformation | AQR Program Tools</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.1.2">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
@@ -34,6 +34,7 @@
                     <ul class="nav-menu">
                         <li><a href="{{ url_for('aqr') }}"><i class="fas fa-chart-line"></i> Air Quality Review</a></li>
                         <li><a href="{{ url_for('transform') }}" class="active"><i class="fas fa-exchange-alt"></i> Data Transformation</a></li>
+                        <li><a href="{{ url_for('audit_trail_view') }}"><i class="fas fa-file-shield"></i> Audit Trail</a></li>
                         <li><a href="javascript:showInfoModal()"><i class="fas fa-circle-info"></i> Information</a></li>
                         <li><a href="javascript:showAboutModal()"><i class="fas fa-question-circle"></i> About</a></li>
                         <li><a href="javascript:location.reload()" class="reset-link"><i class="fas fa-undo"></i> Reset Application</a></li>
@@ -49,6 +50,9 @@
             <header class="top-bar">
                 <div class="breadcrumb">Modules / Data Transformation</div>
                 <div style="display: flex; align-items: center; gap: 20px;">
+                    <button id="darkModeToggle" class="btn-browse" style="width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 12px;" title="Toggle Dark Mode">
+                        <i class="fas fa-moon"></i>
+                    </button>
                     <div class="status-pill success">AQR Program Online</div>
                 </div>
             </header>
@@ -128,7 +132,7 @@
                             <label>Destination Folder</label>
                             <div class="full-path-input">
                                 <input type="text" id="outputDir" readonly placeholder="Select where to save individual files">
-                                <button onclick="browseFolder()" class="btn-browse">Browse Folder</button>
+                                <button onclick="browseFolder()" class="btn-browse">Browse</button>
                             </div>
                         </div>
 
@@ -152,6 +156,21 @@
     </div>
 
     <script>
+        // Initialize theme
+        const currentTheme = localStorage.getItem('theme') || 'dark';
+        document.body.setAttribute('data-theme', currentTheme);
+        const toggleBtn = document.getElementById('darkModeToggle');
+        if (toggleBtn) {
+            toggleBtn.innerHTML = currentTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            toggleBtn.addEventListener('click', () => {
+                const isDark = document.body.getAttribute('data-theme') === 'dark';
+                const newTheme = isDark ? 'light' : 'dark';
+                document.body.setAttribute('data-theme', newTheme);
+                localStorage.setItem('theme', newTheme);
+                toggleBtn.innerHTML = newTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
+            });
+        }
+
         document.getElementById('sidebarToggle').addEventListener('click', () => {
             document.body.classList.toggle('sidebar-collapsed');
         });
@@ -281,7 +300,7 @@
                 <h4 style="color: var(--accent); margin: 0 0 8px 0; font-size: 0.95rem; font-weight: 700;">2. Operational SOP & Workflows</h4>
                 <ol style="margin: 0 0 15px 0; padding-left: 20px; font-size: 0.85rem; line-height: 1.5;">
                     <li style="margin-bottom: 8px;"><strong>Prepare CSV Files:</strong> If your BAS export is a combined log, navigate to the <em>Data Transformation</em> page and use the Report Splitter to split it into room-specific files.</li>
-                    <li style="margin-bottom: 8px;"><strong>Configure Directory Paths:</strong> Select the source mode (Phase I for primary facilities or Phase II for expanded operations). Select the split CSV directory path and the corresponding Excel setpoint/limits specification file.</li>
+                    <li style="margin-bottom: 8px;"><strong>Configure Directory Paths:</strong> Select the source mode (Insight/Info format for primary facilities or Desigo format for expanded operations). Select the split CSV directory path and the corresponding Excel setpoint/limits specification file.</li>
                     <li style="margin-bottom: 8px;"><strong>Execute Quality Review:</strong> Run the analyzer to generate high-fidelity plots, heatmaps, and a summary breakdown of violation events (&gt; 20 min thresholds).</li>
                     <li style="margin-bottom: 8px;"><strong>Fine-tune & Tweak Thresholds:</strong> Zoom, pan, or inspect specific room plots dynamically. Interactively test different High/Low limit setpoints in real-time in each plot's header.</li>
                 </ol>

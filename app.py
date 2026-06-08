@@ -78,11 +78,11 @@ try:
         root = tk.Tk()
         root.withdraw()  # Hide main window
         messagebox.showerror(
-            "Fatal Error 004",
-            f"FATAL ERROR 004: Audit Trail Integrity Check Failed\n\nDetails: {audit_msg}\n\nSystem execution halted due to security violation."
+            "ERR-004",
+            f"ERR-004: Audit Trail Integrity Check Failed\n\nDetails: {audit_msg}\n\nSystem execution halted due to security violation."
         )
         root.destroy()
-        print(f"FATAL ERROR 004: Audit Trail Integrity Check Failed")
+        print(f"ERR-004: Audit Trail Integrity Check Failed")
         print(f"Details: {audit_msg}")
         print("System execution halted due to security violation.")
         sys.exit(1) # IQ-TC-07: Halt system on integrity failure
@@ -496,19 +496,22 @@ def get_file_info():
         folder_path  = data.get('folder_path')
         source_mode  = data.get('source_mode', 'phase1')
         if not folder_path or not os.path.isdir(folder_path):
+            audit_trail.log_event("ALARM_TRIGGERED", f"Action: get-file-info | Msg: Invalid folder path: {folder_path}")
             return jsonify({'error': 'Invalid folder path.'}), 400
 
         if source_mode == 'phase2':
             room_scan = scan_phase2_rooms(folder_path)
             if not room_scan:
-                return jsonify({'error': 'No valid Phase 2 room folders found.'}), 400
+                audit_trail.log_event("ALARM_TRIGGERED", "Action: get-file-info | Code: ERR-010 | Msg: No valid Desigo format room folders found.")
+                return jsonify({'error': 'ERR-010: No valid Desigo format room folders found.'}), 400
             all_dates = []
             for room_id, raw_data_path in room_scan.items():
                 s, e = get_file_date_range_phase2(raw_data_path, room_id=room_id)
                 if s: all_dates.append(s)
                 if e: all_dates.append(e)
             if not all_dates:
-                return jsonify({'error': 'No valid CSV data found in Phase 2 folders.'}), 400
+                audit_trail.log_event("ALARM_TRIGGERED", "Action: get-file-info | Code: ERR-010 | Msg: No valid CSV data found in Desigo format folders.")
+                return jsonify({'error': 'ERR-010: No valid CSV data found in Desigo format folders.'}), 400
             earliest = min(all_dates)
             latest   = max(all_dates)
             return jsonify({
@@ -533,7 +536,8 @@ def get_file_info():
                         rooms.add(room_id)
 
         if not timestamps:
-            return jsonify({'error': 'No valid CSV files found.'}), 400
+            audit_trail.log_event("ALARM_TRIGGERED", "Action: get-file-info | Code: ERR-010 | Msg: No valid CSV files found.")
+            return jsonify({'error': 'ERR-010: No valid CSV files found.'}), 400
 
         sorted_ts = sorted(timestamps)
         earliest = sorted_ts[0]
@@ -560,11 +564,23 @@ def get_rooms():
         source_mode    = data.get('source_mode', 'phase1')
 
         if not all([folder_path, setpoint_path, start_date_str, end_date_str]):
+            audit_trail.log_event("ALARM_TRIGGERED", "Action: get-rooms | Msg: Required parameters missing.")
             return jsonify({'error': 'Required parameters missing.'}), 400
 
         start_date = pd.to_datetime(start_date_str).tz_localize(None)
         end_date   = pd.to_datetime(end_date_str).tz_localize(None)
-        setpoint_df = pd.read_excel(setpoint_path)
+        try:
+            setpoint_df = pd.read_excel(setpoint_path)
+        except FileNotFoundError:
+            return jsonify({'error': 'ERR-002: Limit File Not Found'}), 400
+        
+        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
+        if missing_cols:
+            audit_trail.log_event("ALARM_TRIGGERED", f"Action: get-rooms | Code: ERR-009 | Msg: Missing required columns: {', '.join(missing_cols)}")
+            return jsonify({'error': f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}"}), 400
+
+        setpoint_rooms = set(setpoint_df['Room_number'].astype(str).tolist())
         has_area = 'AREA' in setpoint_df.columns
         available_room_nos_set = set()
 
@@ -589,9 +605,18 @@ def get_rooms():
                             start_d, end_d = start_date.date(), end_date.date()
                             if not (f_end < start_d or f_start > end_d):
                                 base_name = os.path.splitext(filename)[0]
-                                room_no_parts = base_name.split('_')[:-2]
-                                if room_no_parts:
-                                    available_room_nos_set.add('_'.join(room_no_parts))
+                                matched_room = None
+                                sorted_setpoint_rooms = sorted(list(setpoint_rooms), key=len, reverse=True)
+                                for r in sorted_setpoint_rooms:
+                                    if base_name.startswith(r):
+                                        matched_room = r
+                                        break
+                                if matched_room:
+                                    available_room_nos_set.add(matched_room)
+                                else:
+                                    room_no_parts = base_name.split('_')[:-2]
+                                    if room_no_parts:
+                                        available_room_nos_set.add('_'.join(room_no_parts))
 
         filtered_df = setpoint_df[setpoint_df['Room_number'].astype(str).isin(available_room_nos_set)]
         
@@ -623,10 +648,12 @@ def analyze():
         end_date       = data.get('end_date')
 
         if not all([folder_path, setpoint_path, selected_rooms, start_date, end_date]):
+            audit_trail.log_event("ALARM_TRIGGERED", "Action: analyze | Msg: Missing required parameters.")
             return jsonify({'error': 'Missing required parameters.'}), 400
 
         # Reject concurrent analysis attempts
         if not _analysis_lock.acquire(blocking=False):
+            audit_trail.log_event("ALARM_TRIGGERED", "Action: analyze | Msg: Concurrent analysis attempt blocked (HTTP 429).")
             return jsonify({'error': 'Another analysis is already running. Please wait.'}), 429
 
         job_id    = str(uuid.uuid4())[:8]
@@ -655,10 +682,23 @@ def analyze():
                                 error_msg = matches[-1].strip()
                         _jobs[job_id]['error'] = error_msg
                     else:
-                        has_warnings = "ERROR:" in (_logs or "")
+                        room_errors = plot_result.get('room_errors', {}) if plot_result else {}
+                        has_err008 = "ERR-008" in (_logs or "")
+                        
+                        warning_msg = None
+                        lines = []
+                        if room_errors:
+                            for r_id, err in sorted(room_errors.items()):
+                                lines.append(f"Room {r_id}: {err}")
+                        if has_err008:
+                            lines.append("ERR-008: Duplicate timestamps detected and automatically resolved. Please check the log.")
+                        
+                        if lines:
+                            warning_msg = "\n".join(lines)
+                            
                         _jobs[job_id]['response'] = {
                             'filename': os.path.basename(output_file_path),
-                            'warning': 'Some files or rooms had errors. Please check the log.' if has_warnings else None,
+                            'warning': warning_msg,
                             'stats': plot_result.get('stats', {}) if (plot_result and 'error' not in plot_result) else {}
                         }
                         if plot_result and "error" not in plot_result:
@@ -719,6 +759,7 @@ def stream(job_id):
         with _jobs_lock:
             job = _jobs.get(job_id)
         if not job:
+            audit_trail.log_event("ALARM_TRIGGERED", f"Action: stream | Msg: Job not found: {job_id}")
             yield "data: ERROR: Job not found\n\n"
             return
 
@@ -755,11 +796,45 @@ def get_plot(job_id):
     with _jobs_lock:
         job = _jobs.get(job_id)
     if not job or not job.get('done'):
+        audit_trail.log_event("ALARM_TRIGGERED", f"Action: get-plot | Msg: Job not found or not yet complete: {job_id}")
         return jsonify({'error': 'Job not found or not yet complete.'}), 404
     plot = job.get('plot')
     if not plot:
+        audit_trail.log_event("ALARM_TRIGGERED", f"Action: get-plot | Msg: No chart data available: {job_id}")
         return jsonify({'error': 'No chart data available for this job.'}), 404
     return jsonify(plot)
+
+@app.route('/audit-trail')
+def audit_trail_view():
+    return render_template('audit_trail.html')
+
+@app.route('/audit-logs')
+def get_audit_logs():
+    logs = []
+    log_file = audit_trail.LOG_FILE
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        logs.append(json.loads(line))
+        except Exception as e:
+            return jsonify({'error': f"Failed to read logs: {str(e)}"}), 500
+    # Reverse so the newest events are first
+    logs.reverse()
+    return jsonify(logs)
+
+@app.route('/verify-audit-trail', methods=['POST'])
+def verify_audit_logs():
+    try:
+        success, message = audit_trail.verify_audit_trail()
+        if success:
+            audit_trail.log_event("AUDIT_VERIFIED", "Cryptographic audit trail integrity manually verified by user.")
+        else:
+            audit_trail.log_event("AUDIT_TAMPERED", f"WARNING: Audit trail verification failed: {message}")
+        return jsonify({'success': success, 'message': message})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/download/<path:filename>')
 def download(filename):
@@ -788,6 +863,6 @@ if __name__ == '__main__':
     if getattr(sys, 'frozen', False):
         # Auto-open browser in EXE mode
         Timer(1.5, open_browser).start()
-        serve(app, host='127.0.0.1', port=5000, threads=8, channel_timeout=3600) # IQ-TC-06 Localhost Isolation
+        serve(app, host='0.0.0.0', port=5000, threads=8, channel_timeout=3600) # IQ-TC-06 Localhost Isolation
     else:
-        app.run(debug=True)
+        app.run(host='0.0.0.0', port=5000, debug=True)

@@ -11,7 +11,7 @@ SECTION 1: REQUIREMENTS TRACEABILITY MATRIX
 
 | URS ID | Requirement Description | FS Ref | IQ Verif | OQ Verif | PQ Verif |
 |--------|-------------------------|--------|----------|----------|----------|
-| UR-OP-01 | Standalone Executable (`app.exe`) | 1.1 | IQ-TC-01 (App 2) | - | PQ-TC-03 (App 5) |
+| UR-OP-01 | Standalone Executable (`AQR_Dashboard_v1.1.0.exe`) | 1.1 | IQ-TC-01 (App 2) | - | PQ-TC-03 (App 5) |
 | UR-OP-02 | Local Web GUI (Port 5000) | 1.1 | IQ-TC-04 (App 2) | OQ-TC-14, 15 (App 4) | PQ-TC-01, 06 (App 5) |
 | UR-OP-03 | Server-Side Folder Browser | 2.1 | - | OQ-TC-14 (App 4), 24 (App 3) | - |
 | UR-OP-04 | Date Picker Selection | 2.1 | - | OQ-TC-15 (App 4) | - |

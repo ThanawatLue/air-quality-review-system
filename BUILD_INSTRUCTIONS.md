@@ -39,7 +39,7 @@ pip install pyinstaller
 
 **วิธีที่ 1: ใช้ Spec File (แนะนำ)**
 ```bash
-pyinstaller app.spec
+pyinstaller AQR_Dashboard_v1.1.0_Fix.spec
 ```
 
 **วิธีที่ 2: ใช้ Command Line**
@@ -65,13 +65,13 @@ pyinstaller --onefile --windowed --version-file=app_version_info.txt ^
 
 ```
 dist/
-└── app.exe     ← ไฟล์ที่แจกจ่ายให้ผู้ใช้
+└── AQR_Dashboard_v1.1.0.exe     ← ไฟล์ที่แจกจ่ายให้ผู้ใช้
 ```
 
 #### 6. ทดสอบก่อนแจกจ่าย
 
 1. สร้างโฟลเดอร์ใหม่ที่สะอาด (ไม่ใช่โฟลเดอร์โปรเจกต์)
-2. คัดลอก `app.exe` ไปไว้ในโฟลเดอร์นั้น
+2. คัดลอก `AQR_Dashboard_v1.1.0.exe` ไปไว้ในโฟลเดอร์นั้น
 3. สร้างโฟลเดอร์ `reports/` ในตำแหน่งเดียวกัน
 4. รันบนคอมพิวเตอร์ที่ **ไม่มี Python ติดตั้ง** เพื่อยืนยันว่า standalone ได้จริง
 
@@ -92,7 +92,7 @@ dist/
 
 ```
 AirQualityReview/
-├── app.exe
+├── AQR_Dashboard_v1.1.0.exe
 └── reports/        ← โฟลเดอร์ว่างเปล่า — ต้องสร้างก่อนรันแอป
 ```
 
@@ -100,7 +100,7 @@ AirQualityReview/
 
 #### 3. รันแอปพลิเคชัน
 
-- ดับเบิลคลิกที่ `app.exe`
+- ดับเบิลคลิกที่ `AQR_Dashboard_v1.1.0.exe`
 - รอ 5–15 วินาที (ระยะ unpack + server startup)
 - เบราว์เซอร์จะเปิดขึ้นอัตโนมัติที่ `http://127.0.0.1:5000/aqr`
 
@@ -146,10 +146,10 @@ AirQualityReview/
 app.py                   ← Main Flask application
 analysis_logic.py        ← Core analysis engine
 audit_trail.py           ← GAMP 5 audit trail
-app.spec                 ← PyInstaller spec
+AQR_Dashboard_v1.1.0_Fix.spec ← PyInstaller spec
 app_version_info.txt     ← Windows version metadata
 requirements.txt         ← Python dependencies
-templates/               ← HTML templates (aqr.html, transform.html)
+templates/               ← HTML templates (aqr.html, transform.html, audit_trail.html)
 static/                  ← CSS + JavaScript
 data/                    ← SetPointLimit.xlsx, SetPointLimit_Phase2.xlsx
 ```
@@ -158,7 +158,7 @@ data/                    ← SetPointLimit.xlsx, SetPointLimit_Phase2.xlsx
 
 ```
 reports/          ← สร้างใหม่บนเครื่องผู้ใช้
-logs/             ← สร้างใหม่บนเครื่องผู้ใช้
+logs/             ← สร้างใหม่บนเครื่องผู้ใช้ (เก็บไฟล์ secure audit_trail.log ความปลอดภัยสูง)
 dist/             ← output จาก PyInstaller
 build/            ← temp จาก PyInstaller
 __pycache__/      ← Python cache

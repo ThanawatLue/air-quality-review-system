@@ -49,4 +49,4 @@ Acceptance Criteria:
 
 
 SECTION 4: FINAL VERDICT
-After thoroughly reviewing the codebase and fixing any identified high-risk defects, the software code is officially approved. It is deemed structurally sound, safe, and ready to be packaged into the final, single-file program (`app.exe`) for production use.
+After thoroughly reviewing the codebase and fixing any identified high-risk defects, the software code is officially approved. It is deemed structurally sound, safe, and ready to be packaged into the final, single-file program (`AQR_Dashboard_v1.1.0.exe`) for production use.

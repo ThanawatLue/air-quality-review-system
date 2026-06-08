@@ -10,13 +10,13 @@
 ---
 
 SECTION 1: INTRODUCTION
-This document outlines the complete business, operational, functional, and security requirements for the Air Quality Review (AQR) System. The system is delivered as a Standalone Executable (`app.exe`). This means it is packaged as a single, ready-to-use file that contains all complex calculation logic and data security controls, ensuring it runs consistently on any computer without needing extra software installation.
+This document outlines the complete business, operational, functional, and security requirements for the Air Quality Review (AQR) System. The system is delivered as a Standalone Executable (`AQR_Dashboard_v1.1.0.exe`). This means it is packaged as a single, ready-to-use file that contains all complex calculation logic and data security controls, ensuring it runs consistently on any computer without needing extra software installation.
 
 SECTION 2: OPERATIONAL & WORKFLOW REQUIREMENTS
 
 | Req. ID | Requirement Description | Priority |
 |---------|-------------------------|----------|
-| **UR-OP-01** | The system shall be delivered as a single standalone program (`app.exe`). This avoids compatibility issues and removes the need for users to install programming tools (like Python) on their computers. | High |
+| **UR-OP-01** | The system shall be delivered as a single standalone program (`AQR_Dashboard_v1.1.0.exe`). This avoids compatibility issues and removes the need for users to install programming tools (like Python) on their computers. | High |
 | **UR-OP-02** | The system shall provide a web-based Graphical User Interface (GUI). This interface will include an 'Analysis' screen for generating reports and a 'Data Transformation' screen for splitting large files. | High |
 | **UR-OP-03** | The user interface shall allow users to browse and select files directly from network folders or local drives. This internal file browser must bypass standard internet browser security limits that usually block access to local files. | High |
 | **UR-OP-04** | The user interface shall include a calendar widget to let users easily select the 'Start Date' and 'End Date' for their reports. | High |
@@ -48,7 +48,7 @@ SECTION 4: DATA INTEGRITY & SECURITY REQUIREMENTS (21 CFR PART 11)
 | **UR-DI-05** | **Non-Destructive Processing:** The system must strictly open all original data files in "Read-Only" mode. The software must physically lack the ability to delete or modify the original source data. | Critical |
 | **UR-DI-06** | **Error Exception Modals:** If the system encounters a critical error, it must completely stop processing and show a clear error message pop-up on the screen, rather than hiding the error and producing an incorrect report. | High |
 | **UR-DI-07** | **Data Backup Compatibility:** The folders where the system saves its reports and logs must be fully compatible with the IT department's automated daily backup software. | High |
-| **UR-DI-08** | **Binary Integrity Verification:** The main application file (`app.exe`) must have a verifiable digital fingerprint that matches the official record from the developers, proving it is the authentic, uninfected software. | Critical |
+| **UR-DI-08** | **Binary Integrity Verification:** The main application file (`AQR_Dashboard_v1.1.0.exe`) must have a verifiable digital fingerprint that matches the official record from the developers, proving it is the authentic, uninfected software. | Critical |
 
 SECTION 5: REPORTING & OUTPUT FORMATTING REQUIREMENTS
 
