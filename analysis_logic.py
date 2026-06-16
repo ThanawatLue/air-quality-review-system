@@ -151,12 +151,14 @@ def get_file_date_range(file_path):
             # Find Start Date (peek first 150 lines)
             for line in lines[:150]:
                 if any(sep in line for sep in ['/', '-']):
-                    parts = line.replace('"', '').split(',')
+                    line_clean = line.replace('"', '')
+                    is_semicolon = ';' in line_clean
+                    parts = line_clean.split(';') if is_semicolon else line_clean.split(',')
                     for part in parts:
                         part_s = part.strip()
                         if any(sep in part_s for sep in ['/', '-']) and len(part_s) >= 8:
                             try:
-                                dt = pd.to_datetime(part_s, errors='coerce', dayfirst=False)
+                                dt = pd.to_datetime(part_s, errors='coerce', dayfirst=is_semicolon)
                                 if pd.notnull(dt) and 2000 < dt.year < 2100:
                                     if start_date is None: start_date = dt.date()
                                     break
@@ -166,12 +168,14 @@ def get_file_date_range(file_path):
             # Find End Date (peek last 150 lines)
             for line in reversed(lines[-150:]):
                 if any(sep in line for sep in ['/', '-']):
-                    parts = line.replace('"', '').split(',')
+                    line_clean = line.replace('"', '')
+                    is_semicolon = ';' in line_clean
+                    parts = line_clean.split(';') if is_semicolon else line_clean.split(',')
                     for part in parts:
                         part_s = part.strip()
                         if any(sep in part_s for sep in ['/', '-']) and len(part_s) >= 8:
                             try:
-                                dt = pd.to_datetime(part_s, errors='coerce', dayfirst=False)
+                                dt = pd.to_datetime(part_s, errors='coerce', dayfirst=is_semicolon)
                                 if pd.notnull(dt) and 2000 < dt.year < 2100:
                                     if end_date is None: end_date = dt.date()
                                     break
@@ -1267,7 +1271,13 @@ def get_file_date_range_phase2(raw_data_path, room_id=None):
                              usecols=[0], encoding='utf-8', encoding_errors='ignore')
             df.columns = ['DateTime']
             df['DateTime'] = pd.to_datetime(df['DateTime'], dayfirst=True, errors='coerce')
+            # Standardize DateTime by rounding to nearest minute (consistent with _read_files)
+            df['DateTime'] = df['DateTime'].dt.round('min')
+            # Drop footer/invalid rows first (consistent with _read_files)
             df = df.dropna()
+            # Then cut off the last data row to avoid next-day 00:00 duplication (consistent with _read_files)
+            if len(df) > 1:
+                df = df.iloc[:-1]
             if not df.empty:
                 all_dates.append(df['DateTime'].min().date())
                 all_dates.append(df['DateTime'].max().date())
@@ -1308,7 +1318,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
         end_dt   = pd.to_datetime(end_date).tz_localize(None)   if end_date   else None
 
         limit_hash = get_file_hash(setpoint_path)
-        audit_trail.log_event("ANALYSIS_START", f"[Phase2] Folder: {folder_path} | Limit_Hash: {limit_hash}")
+        audit_trail.log_event("ANALYSIS_START", f"Folder: {folder_path} | Limit_Hash: {limit_hash}")
 
         room_errors = {}
 
@@ -1318,6 +1328,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
         # --- Load all selected/needed rooms upfront ---
         room_full_dfs  = {}   # {room_id: full_range_df}
         room_sensors   = {}   # {room_id: set of available sensor names}
+        room_files     = {}   # {room_id: [list of file info dicts]}
         failed_rooms   = {}   # {room_id: error_msg}
 
         for room_id, raw_data_path in room_scan.items():
@@ -1329,20 +1340,33 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                 _, df, sensors = prepare_df_phase2(raw_data_path, room_id=room_id, setpoint_df=setpoint_df)
                 room_full_dfs[room_id] = df
                 room_sensors[room_id]  = sensors
-                prefix = f"{room_id}_"
-                rmt_files = []
+                # Gather all files of interest (RMT, RMH, RDP)
+                room_files[room_id] = []
+                all_files = []
                 for root, _, files in os.walk(raw_data_path):
                     for f in files:
-                        if f.lower().startswith(f"{room_id.lower()}_rmt_") and f.lower().endswith('.csv'):
-                            rmt_files.append(os.path.join(root, f))
-                rmt_files = sorted(rmt_files)
-                f_hash = get_file_hash(rmt_files[0])
-                audit_trail.log_event("FILE_PROCESSED", f"[Phase2] Room: {room_id} | SHA256: {f_hash}")
+                        f_lower = f.lower()
+                        is_target = False
+                        for suffix in ['_rmt_', '_rmh_', '_rdp_']:
+                            if f_lower.startswith(f"{room_id.lower()}{suffix}") and f_lower.endswith('.csv'):
+                                is_target = True
+                                break
+                        if is_target:
+                            all_files.append(os.path.join(root, f))
+                for f_path in sorted(all_files):
+                    start_d, end_d = get_file_date_range(f_path)
+                    f_hash = get_file_hash(f_path)
+                    room_files[room_id].append({
+                        'name': os.path.basename(f_path),
+                        'start': start_d,
+                        'end': end_d,
+                        'hash': f_hash
+                    })
             except Exception as e:
                 error_msg = f"FILE ERROR [{room_id}]: {str(e)}"
                 print(error_msg)
                 traceback.print_exc(file=sys.stdout)
-                audit_trail.log_event("FILE_ERROR", f"[Phase2] Room: {room_id} | Error: {str(e)}")
+                audit_trail.log_event("FILE_ERROR", f"Room: {room_id} | Error: {str(e)}")
                 failed_rooms[room_id] = str(e)
 
         # GxP Upfront Validation: Verify all selected rooms have valid, complete folders and files (ERR-005)
@@ -1406,6 +1430,13 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                 "day_column_label": f"{current_date.strftime('%Y-%m-%d')} ({actual_day_start.strftime('%H:%M')}-{actual_day_end.strftime('%H:%M')})"
             })
 
+            # Log all processed files for needed rooms on this day (consistent with Phase 1)
+            for r_id in sorted(needed_rooms):
+                if r_id in day_cache and r_id in room_files:
+                    for f_info in room_files[r_id]:
+                        if f_info['start'] and f_info['start'] == current_date.date():
+                            audit_trail.log_event("FILE_PROCESSED", f"Room: {r_id} | File: {f_info['name']} | SHA256: {f_info['hash']}")
+
             _total_day = len(rooms_for_day)
             for _day_idx, room_num in enumerate(rooms_for_day, 1):
                 # --- Error from loading stage ---
@@ -1413,7 +1444,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                     sp_err = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]
                     rname_err = str(sp_err['Room_name'].iloc[0]) if not sp_err.empty and not pd.isna(sp_err['Room_name'].iloc[0]) else "N/A"
                     print(f"[ERROR] Skipping Room {room_num} ({rname_err}): {failed_rooms[room_num]}")
-                    audit_trail.log_event("ROOM_SKIPPED_ERROR", f"[Phase2] Room: {room_num} | Reason: {failed_rooms[room_num]}")
+                    audit_trail.log_event("ROOM_SKIPPED_ERROR", f"Room: {room_num} | Reason: {failed_rooms[room_num]}")
                     room_errors[room_num] = failed_rooms[room_num]
                     report_data.append({
                         "is_date_header": False, "is_error": True,
@@ -1451,8 +1482,8 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                         day_cache, 
                         selected_rooms, 
                         setpoint_df,
-                        start_dt,
-                        end_dt
+                        day_analysis_start,
+                        day_analysis_end
                     )
                     if res is None: continue
                     spec_txt, analysis_res_txt = res
@@ -1469,7 +1500,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                     error_msg = f"ROOM ERROR [{room_num}]: {str(e)}"
                     print(error_msg)
                     traceback.print_exc(file=sys.stdout)
-                    audit_trail.log_event("ROOM_ERROR", f"[Phase2] Room: {room_num} | Error: {str(e)}")
+                    audit_trail.log_event("ROOM_ERROR", f"Room: {room_num} | Error: {str(e)}")
                     room_errors[room_num] = str(e)
                     try:
                         sp_err2 = setpoint_df[setpoint_df['Room_number'].astype(str) == room_num]
@@ -1522,11 +1553,11 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                         ws.write(current_row, day_col_idx, day_result, fmt_error if is_error else fmt_left)
                     current_row += 1
         except Exception as excel_err:
-            audit_trail.log_event("EXCEL_ERROR", f"[Phase2] Failed to write Excel report: {str(excel_err)}")
+            audit_trail.log_event("EXCEL_ERROR", f"Failed to write Excel report: {str(excel_err)}")
             raise ValueError(f"ERR-007: Report Generation Failed - {str(excel_err)}")
 
         report_name = os.path.basename(output_path)
-        audit_trail.log_event("ANALYSIS_SUCCESS", f"[Phase2] Report: {report_name}")
+        audit_trail.log_event("ANALYSIS_SUCCESS", f"Report: {report_name}")
 
         try:
             plot_result = _compute_plot_result(all_room_dfs, setpoint_df, list(selected_rooms), start_dt, end_dt)
@@ -1539,7 +1570,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
                 'errors':     _n_errors
             }
         except Exception as plot_err:
-            audit_trail.log_event("PLOT_ERROR", f"[Phase2] Chart computation failed: {str(plot_err)}")
+            audit_trail.log_event("PLOT_ERROR", f"Chart computation failed: {str(plot_err)}")
             plot_result = {"error": str(plot_err)}
 
         if isinstance(plot_result, dict):
@@ -1550,7 +1581,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
     except Exception as e:
         print(f"ERROR: {str(e)}")
         traceback.print_exc(file=log_stream)
-        audit_trail.log_event("ANALYSIS_FAILED", f"[Phase2] Error: {str(e)}")
+        audit_trail.log_event("ANALYSIS_FAILED", f"Error: {str(e)}")
         return None, log_stream.getvalue(), None
     finally:
         sys.stdout = old_stdout

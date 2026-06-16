@@ -1,0 +1,454 @@
+=== Cell 50 (markdown) ===
+### InT-01: check_reverse_violations (REAL data + copied validation data)
+
+================================================================================
+
+=== Cell 51 (code) ===
+print("=" * 80)
+print("InT-01: check_reverse_violations - real-data based execution")
+print("=" * 80)
+
+from pathlib import Path
+import io
+import os
+import shutil
+from contextlib import redirect_stdout
+
+import pandas as pd
+import openpyxl
+
+import analysis_logic
+
+PROJECT_ROOT = Path(r"D:\ex_work\AirQualityReview_Project")
+DATA_ROOT = PROJECT_ROOT / "data"
+BAS_SOURCE = DATA_ROOT / "csv_main" / "C"
+SETPOINT_PATH = DATA_ROOT / "SetPointLimit.xlsx"
+VALIDATION_ROOT = DATA_ROOT / "validation_tests" / "int_01_06_realdata"
+PHASE2_SOURCE = DATA_ROOT / "csv_b11"
+PHASE2_SETPOINT_PATH = DATA_ROOT / "SetPointLimit_B11.xlsx"
+
+
+def reset_case_dir(name):
+    case_dir = VALIDATION_ROOT / name
+    if case_dir.exists():
+        shutil.rmtree(case_dir)
+    case_dir.mkdir(parents=True, exist_ok=True)
+    return case_dir
+
+
+def copy_bas_file(room_id, dest_dir):
+    matches = sorted(BAS_SOURCE.glob(f"{room_id}_*.csv"))
+    assert matches, f"No BAS source CSV found for {room_id}"
+    dest = dest_dir / matches[0].name
+    shutil.copy2(matches[0], dest)
+    return dest
+
+
+def load_setpoint_copy(dest_dir, filename="SetPointLimit_case.xlsx"):
+    dest = dest_dir / filename
+    shutil.copy2(SETPOINT_PATH, dest)
+    return pd.read_excel(dest).dropna(subset=["Room_number"]), dest
+
+
+def save_setpoint(df, path):
+    df.to_excel(path, index=False)
+
+
+def prepared_from_copy(csv_path, room_id, setpoint_df):
+    return analysis_logic.prepare_df(str(csv_path), room_id, setpoint_df)
+
+
+def assert_contains(text, needle, case_id):
+    assert needle in text, f"{case_id} expected {needle!r} in {text!r}"
+
+
+def excel_contains_text(path, needle):
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                for value in row:
+                    if value is not None and needle in str(value):
+                        return True
+        return False
+    finally:
+        wb.close()
+
+
+def safe_text(value, limit=None):
+    text = str(value)
+    if limit is not None:
+        text = text[:limit]
+    return text.encode("ascii", "ignore").decode("ascii")
+
+
+case_dir = reset_case_dir("int01")
+setpoint_df, setpoint_case_path = load_setpoint_copy(case_dir)
+room_csv = copy_bas_file("1-P045", case_dir)
+corridor_csv = copy_bas_file("1-P051", case_dir)
+file_list = [str(room_csv), str(corridor_csv)]
+
+room_df = prepared_from_copy(room_csv, "1-P045", setpoint_df)
+corridor_df = prepared_from_copy(corridor_csv, "1-P051", setpoint_df)
+base_times = corridor_df["DateTime"].head(3).tolist()
+
+print("--- InT-01-1: high-pressure dependent room drops below corridor -> OVER ---")
+sp_high = setpoint_df.copy()
+sp_high.loc[sp_high["Room_number"].astype(str) == "1-P045", ["Pressure_Low_Limit", "Pressure_High_Limit"]] = [35, 45]
+high_room_df = room_df.copy()
+high_room_df.loc[:2, "DateTime"] = base_times
+high_room_df.loc[:2, "Pressure"] = [20, 20, 20]
+high_corridor_df = corridor_df.copy()
+high_corridor_df.loc[:2, "Pressure"] = [30, 31, 32]
+buf = io.StringIO()
+with redirect_stdout(buf):
+    lines_01_1 = analysis_logic.check_reverse_violations(
+        "1-P051", high_corridor_df, 0, 2, sp_high, ["1-P045", "1-P051"], {"1-P045": high_room_df, "1-P051": high_corridor_df}
+    )
+log_01_1 = buf.getvalue()
+print(log_01_1)
+print(lines_01_1)
+assert lines_01_1 and "over 1-P045" in "".join(lines_01_1)
+assert "REVERSE OVER violation data" in log_01_1
+print("InT-01-1 PASS")
+
+print("\n--- InT-01-2: low-pressure dependent room spikes above corridor -> UNDER ---")
+low_room_df = room_df.copy()
+low_room_df.loc[:2, "DateTime"] = base_times
+low_room_df.loc[:2, "Pressure"] = [40, 41, 42]
+low_corridor_df = corridor_df.copy()
+low_corridor_df.loc[:2, "Pressure"] = [30, 31, 32]
+buf = io.StringIO()
+with redirect_stdout(buf):
+    lines_01_2 = analysis_logic.check_reverse_violations(
+        "1-P051", low_corridor_df, 0, 2, setpoint_df, ["1-P045", "1-P051"], {"1-P045": low_room_df, "1-P051": low_corridor_df}
+    )
+log_01_2 = buf.getvalue()
+print(log_01_2)
+print(lines_01_2)
+assert lines_01_2 and "under 1-P045" in "".join(lines_01_2)
+assert "REVERSE UNDER violation data" in log_01_2
+print("InT-01-2 PASS")
+
+print("\n--- InT-01-3: merge_asof tolerance keeps <=60s and drops >60s ---")
+tolerance_room_df = room_df.head(2).copy()
+tolerance_corridor_df = corridor_df.head(2).copy()
+tolerance_corridor_df.loc[0, "DateTime"] = pd.Timestamp("2026-05-13 00:00:00")
+tolerance_corridor_df.loc[1, "DateTime"] = pd.Timestamp("2026-05-13 00:05:00")
+tolerance_room_df.loc[0, "DateTime"] = pd.Timestamp("2026-05-13 00:00:45")
+tolerance_room_df.loc[1, "DateTime"] = pd.Timestamp("2026-05-13 00:06:30")
+tolerance_corridor_df.loc[:, "Pressure"] = [30, 30]
+tolerance_room_df.loc[:, "Pressure"] = [40, 40]
+buf = io.StringIO()
+with redirect_stdout(buf):
+    lines_01_3 = analysis_logic.check_reverse_violations(
+        "1-P051", tolerance_corridor_df, 0, 1, setpoint_df, ["1-P045", "1-P051"], {"1-P045": tolerance_room_df, "1-P051": tolerance_corridor_df}
+    )
+log_01_3 = buf.getvalue()
+print(log_01_3)
+print(lines_01_3)
+assert "00:00" in "".join(lines_01_3)
+assert "00:05" not in "".join(lines_01_3)
+print("InT-01-3 PASS")
+
+print("\n--- InT-01-4: find_compare_path extracts room id and returns configured corridor tuple ---")
+compare_room, compare_path = analysis_logic.find_compare_path(file_list, setpoint_df, "1-P045")
+print(compare_room, compare_path)
+assert compare_room == "1-P051"
+assert compare_path and Path(compare_path).name.startswith("1-P051")
+print("InT-01-4 PASS")
+
+print("\nInT-01 COMPLETE")
+
+================================================================================
+
+=== Cell 52 (markdown) ===
+### InT-02: _compute_plot_result (REAL prepare_df data + copied value adjustments)
+
+================================================================================
+
+=== Cell 53 (code) ===
+print("=" * 80)
+print("InT-02: _compute_plot_result - real prepare_df data with controlled copied values")
+print("=" * 80)
+
+case_dir = reset_case_dir("int02")
+setpoint_df, _ = load_setpoint_copy(case_dir)
+room_csv = copy_bas_file("1-P045", case_dir)
+df_real = prepared_from_copy(room_csv, "1-P045", setpoint_df)
+start_dt = df_real["DateTime"].min()
+end_dt = start_dt + pd.Timedelta(minutes=35)
+
+print("--- InT-02-1: 6 continuous rows create one temp and one humidity violation; pressure no spec -> 0 ---")
+sp_no_pressure = setpoint_df.copy()
+mask = sp_no_pressure["Room_number"].astype(str) == "1-P045"
+sp_no_pressure.loc[mask, ["Pressure_Low_Limit", "Pressure_High_Limit"]] = [pd.NA, pd.NA]
+df_case = df_real.head(8).copy()
+df_case["Temperature"] = 24.0
+df_case["Humidity"] = 45.0
+df_case.loc[:5, "Temperature"] = 26.0
+df_case.loc[:5, "Humidity"] = 60.0
+res = analysis_logic._compute_plot_result({"1-P045": [df_case]}, sp_no_pressure, ["1-P045"], start_dt, end_dt)
+print(res["summary"])
+s = res["summary"][0]
+assert s["temp_v"] == 1 and s["hum_v"] == 1 and s["press_v"] == 0, res["summary"]
+print("InT-02-1 PASS")
+
+print("\n--- InT-02-2: fewer than 6 continuous rows are filtered out ---")
+df_short = df_real.head(8).copy()
+df_short["Temperature"] = 24.0
+df_short["Humidity"] = 45.0
+df_short["Pressure"] = 15.0
+df_short.loc[:4, "Temperature"] = 26.0
+df_short.loc[:4, "Humidity"] = 60.0
+df_short.loc[:4, "Pressure"] = 40.0
+res_short = analysis_logic._compute_plot_result({"1-P045": [df_short]}, setpoint_df, ["1-P045"], start_dt, end_dt)
+print(res_short["summary"])
+s = res_short["summary"][0]
+assert s["temp_v"] == 0 and s["hum_v"] == 0 and s["press_v"] == 0, res_short["summary"]
+print("InT-02-2 PASS")
+
+print("\n--- InT-02-3: missing values do not crash and are returned as None in plot_data ---")
+df_missing = df_real.head(8).copy()
+df_missing.loc[1, "Temperature"] = pd.NA
+df_missing.loc[2, "Humidity"] = pd.NA
+df_missing.loc[3, "Pressure"] = pd.NA
+res_missing = analysis_logic._compute_plot_result({"1-P045": [df_missing]}, setpoint_df, ["1-P045"], start_dt, end_dt)
+plot_data = res_missing["plot_data"]["1-P045"]
+print(pd.DataFrame({"time": plot_data["times"][:5], "temp": plot_data["temp"][:5], "hum": plot_data["hum"][:5], "press": plot_data["press"][:5]}))
+assert plot_data["temp"][1] is None
+assert plot_data["hum"][2] is None
+assert plot_data["press"][3] is None
+print("InT-02-3 PASS")
+
+print("\nInT-02 COMPLETE")
+
+================================================================================
+
+=== Cell 54 (markdown) ===
+### InT-03: get_plot_info (REAL directory scan + corrupt copied CSV)
+
+================================================================================
+
+=== Cell 55 (code) ===
+print("=" * 80)
+print("InT-03: get_plot_info - real directory scan and real prepare_df error handling")
+print("=" * 80)
+
+case_dir = reset_case_dir("int03")
+nested_dir = case_dir / "nested" / "bas"
+nested_dir.mkdir(parents=True, exist_ok=True)
+setpoint_df, setpoint_case_path = load_setpoint_copy(case_dir)
+for room in ["1-P045", "1-P051"]:
+    copy_bas_file(room, nested_dir)
+
+print("--- InT-03-1: nested scan, room parsing, selected-room filtering ---")
+res = analysis_logic.get_plot_info(
+    folder_path=str(case_dir),
+    setpoint_path=str(setpoint_case_path),
+    selected_rooms=["1-P045"],
+    start_date="2026-05-13",
+    end_date="2026-05-13",
+    limits=None,
+)
+print(res.keys())
+print(res.get("summary"))
+assert "1-P045" in res.get("plot_data", {})
+assert "1-P051" not in res.get("plot_data", {})
+assert res.get("summary") and res["summary"][0]["room_id"] == "1-P045"
+print("InT-03-1 PASS")
+
+print("\n--- InT-03-2: corrupt real-named CSV is logged and loop continues ---")
+corrupt_path = nested_dir / "1-P045_05-15-26_01-00.csv"
+corrupt_path.write_text("this,is,not,a,valid,AQR,csv\n1,2,3\n", encoding="utf-8")
+before = Path(analysis_logic.audit_trail.LOG_FILE).read_text(encoding="utf-8", errors="ignore") if Path(analysis_logic.audit_trail.LOG_FILE).exists() else ""
+res_corrupt = analysis_logic.get_plot_info(
+    folder_path=str(case_dir),
+    setpoint_path=str(setpoint_case_path),
+    selected_rooms=["1-P045"],
+    start_date="2026-05-13",
+    end_date="2026-05-13",
+    limits=None,
+)
+after = Path(analysis_logic.audit_trail.LOG_FILE).read_text(encoding="utf-8", errors="ignore") if Path(analysis_logic.audit_trail.LOG_FILE).exists() else ""
+new_audit = after[len(before):]
+print(new_audit[-2000:])
+assert "PLOT_DATA_ERROR" in new_audit
+assert "1-P045_05-15-26_01-00.csv" in new_audit
+assert "1-P045" in res_corrupt.get("plot_data", {})
+print("InT-03-2 PASS")
+
+print("\nInT-03 COMPLETE")
+
+================================================================================
+
+=== Cell 56 (markdown) ===
+### InT-04: _analyze_single_room_core (REAL prepare_df data + controlled copied values)
+
+================================================================================
+
+=== Cell 57 (code) ===
+print("=" * 80)
+print("InT-04: _analyze_single_room_core - real prepare_df data with copied value adjustments")
+print("=" * 80)
+
+case_dir = reset_case_dir("int04")
+setpoint_df, _ = load_setpoint_copy(case_dir)
+room_csv = copy_bas_file("1-P045", case_dir)
+corridor_csv = copy_bas_file("1-P051", case_dir)
+df_room_base = prepared_from_copy(room_csv, "1-P045", setpoint_df).head(12).copy()
+df_corr_base = prepared_from_copy(corridor_csv, "1-P051", setpoint_df).head(12).copy()
+row_045 = setpoint_df[setpoint_df["Room_number"].astype(str) == "1-P045"]
+tick_mark = "Pass"
+cross_mark = "Fail"
+day_start = df_room_base["DateTime"].min()
+day_end = df_room_base["DateTime"].max()
+
+
+def run_core(df, prepared_cache):
+    captured = io.StringIO()
+    with redirect_stdout(captured):
+        spec, result = analysis_logic._analyze_single_room_core(
+            df, "1-P045", row_045, tick_mark, cross_mark, ["1-P051"],
+            prepared_cache, ["1-P045", "1-P051"], setpoint_df, day_start, day_end
+        )
+    print(captured.getvalue().encode("ascii", "ignore").decode("ascii")[:3000])
+    return spec, result
+
+print("--- InT-04-1: >=25-minute block fails; transient block is omitted ---")
+df_25 = df_room_base.copy()
+df_25["Temperature"] = 24.0
+df_25.loc[0:5, "Temperature"] = 26.0
+df_25.loc[8:10, "Temperature"] = 26.0
+spec, result = run_core(df_25, {"1-P045": df_25, "1-P051": df_corr_base})
+print(result)
+assert "Temperature: Fail" in result
+assert "00:00 to 00:25" in result
+assert "00:40 to 00:50" not in result
+print("InT-04-1 PASS")
+
+print("\n--- InT-04-2: NaN sensor readings are flagged as Data Loss and concatenate with Fail ---")
+df_loss = df_25.copy()
+df_loss.loc[7, "Temperature"] = pd.NA
+df_loss.loc[8, "Humidity"] = pd.NA
+spec, result_loss = run_core(df_loss, {"1-P045": df_loss, "1-P051": df_corr_base})
+print(result_loss)
+assert "Temperature: Fail & Data Loss" in result_loss
+assert "Humidity:" in result_loss and "Data Loss" in result_loss
+print("InT-04-2 PASS")
+
+print("\n--- InT-04-3: pressure out-of-limit can downgrade to false alarm or trigger fail via corridor comparison ---")
+df_false_alarm = df_room_base.copy()
+df_corr = df_corr_base.copy()
+df_false_alarm["Pressure"] = 40.0
+df_corr["Pressure"] = 45.0
+spec, result_false = run_core(df_false_alarm, {"1-P045": df_false_alarm, "1-P051": df_corr})
+print(result_false)
+assert "Pressure: Pass" in result_false and "within 1-P051" in result_false
+
+df_actual_fail = df_room_base.copy()
+df_actual_fail["Pressure"] = 40.0
+df_corr["Pressure"] = 30.0
+spec, result_fail = run_core(df_actual_fail, {"1-P045": df_actual_fail, "1-P051": df_corr})
+print(result_fail)
+assert "Pressure: Fail" in result_fail and "over 1-P051" in result_fail
+print("InT-04-3 PASS")
+
+print("\nInT-04 COMPLETE")
+
+================================================================================
+
+=== Cell 58 (markdown) ===
+### InT-05: analyze_files (Phase I REAL full process with validation copies)
+
+================================================================================
+
+=== Cell 59 (code) ===
+print("=" * 80)
+print("InT-05: analyze_files - Phase I full statistical execution with real-data copies")
+print("=" * 80)
+
+case_dir = reset_case_dir("int05")
+setpoint_df, setpoint_case_path = load_setpoint_copy(case_dir)
+for room in ["1-P045", "1-P051"]:
+    copy_bas_file(room, case_dir)
+
+before = Path(analysis_logic.audit_trail.LOG_FILE).read_text(encoding="utf-8", errors="ignore") if Path(analysis_logic.audit_trail.LOG_FILE).exists() else ""
+out_path, logs, plot_result = analysis_logic.analyze_files(
+    folder_path=str(case_dir),
+    setpoint_path=str(setpoint_case_path),
+    selected_rooms=["1-P045", "1-P051"],
+    start_date="2026-05-13",
+    end_date="2026-05-14",
+)
+after = Path(analysis_logic.audit_trail.LOG_FILE).read_text(encoding="utf-8", errors="ignore") if Path(analysis_logic.audit_trail.LOG_FILE).exists() else ""
+new_audit = after[len(before):]
+print(safe_text(logs, 4000))
+print("--- audit tail ---")
+print(safe_text(new_audit[-4000:]))
+print("--- plot_result summary ---")
+print(plot_result.get("summary") if isinstance(plot_result, dict) else plot_result)
+print("--- report ---")
+print(out_path)
+
+assert "ANALYSIS_START" in new_audit
+assert "FILE_PROCESSED" in new_audit
+assert "ANALYSIS_SUCCESS" in new_audit
+assert out_path and Path(out_path).exists() and Path(out_path).stat().st_size > 0
+assert isinstance(plot_result, dict) and plot_result.get("summary")
+assert excel_contains_text(out_path, "Software Version: v1.1.0")
+assert excel_contains_text(out_path, "1-P045")
+print("InT-05-1 PASS")
+
+print("\nInT-05 COMPLETE")
+
+================================================================================
+
+=== Cell 60 (markdown) ===
+### InT-06: analyze_files_phase2 (Phase II REAL full process)
+
+================================================================================
+
+=== Cell 61 (code) ===
+print("=" * 80)
+print("InT-06: analyze_files_phase2 - Phase II full statistical execution with real data")
+print("=" * 80)
+
+case_dir = reset_case_dir("int06")
+phase2_case = case_dir / "csv_b11"
+shutil.copytree(PHASE2_SOURCE / "2026-05-01", phase2_case / "2026-05-01")
+shutil.copy2(PHASE2_SETPOINT_PATH, case_dir / "SetPointLimit_B11.xlsx")
+
+before = Path(analysis_logic.audit_trail.LOG_FILE).read_text(encoding="utf-8", errors="ignore") if Path(analysis_logic.audit_trail.LOG_FILE).exists() else ""
+out_path, logs, plot_result = analysis_logic.analyze_files_phase2(
+    folder_path=str(phase2_case),
+    setpoint_path=str(case_dir / "SetPointLimit_B11.xlsx"),
+    selected_rooms=["11-1-012", "11-1-013"],
+    start_date="2026-04-30",
+    end_date="2026-05-01",
+)
+after = Path(analysis_logic.audit_trail.LOG_FILE).read_text(encoding="utf-8", errors="ignore") if Path(analysis_logic.audit_trail.LOG_FILE).exists() else ""
+new_audit = after[len(before):]
+print(safe_text(logs, 4000))
+print("--- audit tail ---")
+print(safe_text(new_audit[-4000:]))
+print("--- plot_result summary ---")
+print(plot_result.get("summary") if isinstance(plot_result, dict) else plot_result)
+
+room_id, df_p2, sensors = analysis_logic.prepare_df_phase2(str(phase2_case / "2026-05-01"), "11-1-012", pd.read_excel(case_dir / "SetPointLimit_B11.xlsx"))
+print("prepare_df_phase2:", room_id, df_p2.shape, sensors)
+
+assert "ANALYSIS_START" in new_audit
+assert "FILE_PROCESSED" in new_audit
+assert "ANALYSIS_SUCCESS" in new_audit
+assert out_path and Path(out_path).exists() and Path(out_path).stat().st_size > 0
+assert isinstance(plot_result, dict) and plot_result.get("summary")
+assert room_id == "11-1-012" and not df_p2.empty
+assert {"Temperature", "Humidity", "Pressure"}.issubset(set(sensors))
+assert excel_contains_text(out_path, "Software Version: v1.1.0")
+print("InT-06-1 PASS")
+
+print("\nInT-06 COMPLETE")
+
+================================================================================
+

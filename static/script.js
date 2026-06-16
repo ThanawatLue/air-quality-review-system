@@ -391,9 +391,9 @@ document.getElementById('analyzeBtn').onclick = async () => {
                         msg.style.color = '#f59e0b';
                         document.getElementById('statusIcon').style.background = '#f59e0b';
                         
-                        // Check if warning contains room-level errors (ERR-001, ERR-003, ERR-005, ERR-006)
+                        // Check if warning contains room-level errors (ERR-001, ERR-003, ERR-005, ERR-006, ERR-011)
                         const codesFound = [];
-                        ['ERR-001', 'ERR-003', 'ERR-005', 'ERR-006'].forEach(code => {
+                        ['ERR-001', 'ERR-003', 'ERR-005', 'ERR-006', 'ERR-011'].forEach(code => {
                             if (result.warning.includes(code)) {
                                 codesFound.push(code);
                             }

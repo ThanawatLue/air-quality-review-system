@@ -379,7 +379,7 @@
             
             modalEl.classList.remove('theme-warning', 'theme-error');
             
-            const isWarning = code.includes('ERR-008') || ['ERR-001', 'ERR-003', 'ERR-005', 'ERR-006'].some(c => code.includes(c));
+            const isWarning = code.includes('ERR-008') || ['ERR-001', 'ERR-003', 'ERR-005', 'ERR-006', 'ERR-011'].some(c => code.includes(c));
             if (isWarning) {
                 modalEl.classList.add('theme-warning');
                 if (code.includes('ERR-008')) {
@@ -409,6 +409,8 @@
                     icon.className = 'fas fa-file-circle-exclamation';
                 } else if (code === 'ERR-010') {
                     icon.className = 'fas fa-folder-open';
+                } else if (code === 'ERR-011') {
+                    icon.className = 'fas fa-network-wired';
                 } else {
                     icon.className = 'fas fa-triangle-exclamation';
                 }

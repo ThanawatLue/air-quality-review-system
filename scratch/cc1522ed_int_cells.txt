@@ -1,0 +1,630 @@
+=== Cell 50 (markdown) ===
+### InT-01: Corridor Pressure Comparison and Tolerances (REAL data, full process)
+================================================================================
+
+=== Cell 51 (code) ===
+print("=" * 80)
+print("InT-01: Corridor Pressure Comparison and Tolerances (integration mode)")
+print("=" * 80)
+
+# ============================================================
+# STEP 1: SCAN real CSV directory & load SetPointLimit
+# ============================================================
+import os, sys, pandas as pd
+import analysis_logic
+
+folder_path = r"D:\ex_work\AirQualityReview_Project\data\csv_main\C"
+setpoint_path = r"D:\ex_work\AirQualityReview_Project\data\SetPointLimit.xlsx"
+
+print("--- STEP 1: Loading SetPointLimit.xlsx ---")
+setpoint_df = pd.read_excel(setpoint_path).dropna(subset=["Room_number"])
+print(f"Total rooms in limits: {len(setpoint_df)}")
+
+# Use 1-P045 (Core Tablet Storage, corridor=1-P051) and 1-P051 (Corridor)
+# 1-P045 has full 288-row data on 2026-05-13 with Temp=26.0 > 25.0 limit = violation!
+selected_rooms_all = ["1-P045", "1-P051"]
+print(f"Selected rooms: {selected_rooms_all}")
+print()
+# Verify room specs
+for r in selected_rooms_all:
+    sp = setpoint_df[setpoint_df["Room_number"] == r]
+    if not sp.empty:
+        print(f"  {r} ({sp['Room_name'].iloc[0]}): T<={sp['Temperature_Limit'].iloc[0]}C, P={sp['Pressure_Low_Limit'].iloc[0]}-{sp['Pressure_High_Limit'].iloc[0]}Pa, Corridor={sp['Room_Pressure_Comparison'].iloc[0]}")
+
+print("\n--- STEP 2: Scanning CSV files in real directory ---")
+all_csv_files = []
+for root, dirs, files in os.walk(folder_path):
+    for fname in files:
+        if fname.lower().endswith(".csv"):
+            all_csv_files.append(os.path.join(root, fname))
+print(f"Total CSV files found: {len(all_csv_files)}")
+
+# Filter files for our rooms
+room_files = {}
+for f_path in all_csv_files:
+    base = os.path.splitext(os.path.basename(f_path))[0]
+    for r in selected_rooms_all:
+        if base.startswith(r):
+            room_files.setdefault(r, []).append(f_path)
+for r in selected_rooms_all:
+    print(f"  {r}: {len(room_files.get(r, []))} file(s)")
+    for f in room_files.get(r, []):
+        print(f"      -> {os.path.basename(f)}")
+
+print("\n--- STEP 3: Quick peek at data dates ---")
+df_045_test = analysis_logic.prepare_df(room_files["1-P045"][0], "1-P045", setpoint_df)
+csv_min_date = df_045_test["DateTime"].min().strftime("%Y-%m-%d")
+csv_max_date = df_045_test["DateTime"].max().strftime("%Y-%m-%d")
+print(f"1-P045 actual data range: {csv_min_date} to {csv_max_date}")
+print(f"Total rows: {len(df_045_test)} (full 24h expected)")
+print(f"Temperature range: {df_045_test['Temperature'].min():.1f} to {df_045_test['Temperature'].max():.1f} C")
+print(f"  (Temp 26.0 > limit 25.0 = violation expected!)")
+print(f"Pressure range: {df_045_test['Pressure'].min():.1f} to {df_045_test['Pressure'].max():.1f} Pa")
+print(f"  (40.0 Pa > limit 20.0 Pa = violation + 40.0 > corridor 25-35 = REVERSE!)")
+
+df_051_test = analysis_logic.prepare_df(room_files["1-P051"][0], "1-P051", setpoint_df)
+print(f"\n1-P051 actual data range: {df_051_test['DateTime'].min()} to {df_051_test['DateTime'].max()}")
+print(f"Total rows: {len(df_051_test)}")
+print(f"Pressure range: {df_051_test['Pressure'].min():.1f} to {df_051_test['Pressure'].max():.1f} Pa (limit 25-35 Pa)")
+
+print("\n--- STEP 4: Running analyze_files() - FULL system process ---")
+print("  (Pipeline: scan -> prepare_df -> find_compare_path -> _analyze_single_room_core")
+print("   -> check_reverse_violations -> Excel report)")
+print("  Date filter: " + csv_min_date + "\n")
+
+out_path, logs, plot_result = analysis_logic.analyze_files(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=selected_rooms_all,
+    start_date=csv_min_date,
+    end_date=csv_max_date
+)
+
+print("\n" + "=" * 80)
+print("InT-01 SYSTEM LOGS (full process output with violations)")
+print("=" * 80)
+print(logs)
+
+print("\n--- Plot result summary ---")
+if isinstance(plot_result, dict) and "summary" in plot_result:
+    print("  Summary: " + str(plot_result["summary"]))
+    temp_v = plot_result["summary"][0]["temp_v"] if plot_result["summary"] else 0
+    hum_v = plot_result["summary"][0]["hum_v"] if plot_result["summary"] else 0
+    press_v = plot_result["summary"][0]["press_v"] if plot_result["summary"] else 0
+    print(f"  Temp violations (>25C for 25+ min): {temp_v}")
+    print(f"  Humidity violations: {hum_v}")
+    print(f"  Pressure violations: {press_v}")
+if isinstance(plot_result, dict) and "violation_intervals" in plot_result:
+    print(f"  Violation intervals: {len(plot_result['violation_intervals'])}")
+    for v in plot_result["violation_intervals"]:
+        print(f"    {v['room_id']} | {v['type']} | {v['start']} to {v['end']} ({v['duration']} min)")
+if out_path:
+    import os as _os
+    print(f"\nExcel report: {out_path} ({_os.path.getsize(out_path):,} bytes)")
+
+print("\n" + "=" * 80)
+print("InT-01: CORRIDOR COMPARISON ANALYSIS (MAIN TEST)")
+print("=" * 80)
+
+print("\n--- STEP 5: Direct prepare_df for each room ---")
+
+# Prepare 1-P045 (dependent room, corridor=1-P051)
+df_045 = analysis_logic.prepare_df(room_files["1-P045"][0], "1-P045", setpoint_df)
+print("\n[1-P045] Core Tablet Storage (Pressure: 10-20 Pa, corridor=1-P051):")
+print(f"  Rows: {len(df_045)}, Range: {df_045['DateTime'].min()} to {df_045['DateTime'].max()}")
+display(df_045.head(10))
+display(df_045.tail(5))
+
+# Prepare 1-P051 (corridor room)
+df_051 = analysis_logic.prepare_df(room_files["1-P051"][0], "1-P051", setpoint_df)
+print("\n[1-P051] Corridor (Pressure: 25-35 Pa):")
+print(f"  Rows: {len(df_051)}, Range: {df_051['DateTime'].min()} to {df_051['DateTime'].max()}")
+display(df_051.head(10))
+
+print("\n--- STEP 6: Manual merge_asof corridor comparison (60s tolerance) ---")
+print("  Rule: 1-P045 (10-20 Pa) should be BELOW corridor 1-P051 (25-35 Pa)")
+print("  Violation IF: room_Pressure EXCEEDS corridor_Pressure\n")
+
+comparison_df = pd.merge_asof(
+    df_051[["DateTime", "Pressure"]].sort_values("DateTime"),
+    df_045[["DateTime", "Pressure"]].sort_values("DateTime"),
+    on="DateTime", direction="nearest", tolerance=pd.Timedelta("60s"),
+    suffixes=("_1-P051", "_1-P045")
+).dropna(subset=["Pressure_1-P045"]).reset_index(drop=True)
+comparison_df["Diff"] = comparison_df["Pressure_1-P051"] - comparison_df["Pressure_1-P045"]
+
+print(f"Comparison rows (merge_asof matched): {len(comparison_df)}")
+display(comparison_df.head(20))
+print("...")
+display(comparison_df.tail(10))
+
+# Check for reverse violations
+reverse_violations = comparison_df[comparison_df["Pressure_1-P045"] > comparison_df["Pressure_1-P051"]]
+print(f"\n--- STEP 7: Reverse violation check ---")
+print(f"Rows where room_Pressure > corridor_Pressure: {len(reverse_violations)}")
+if len(reverse_violations) > 0:
+    print("  *** GxP ALERT: Room pressure EXCEEDS corridor pressure! ***")
+    print("  (negative Delta-P cascade - GxP critical)\n")
+    display(reverse_violations.head(20))
+else:
+    print("  OK: All room pressures below corridor as expected.")
+
+print("\n--- STEP 8: Key findings summary ---")
+print(f"  Rooms: 1-P045 (Core Tablet Storage) vs 1-P051 (Corridor)")
+print(f"  CSV data: 288 rows on 2026-05-13 (full 24h at 5min intervals)")
+print(f"  Temperature violation: Temp=26.0 > Limit=25.0 -> DETECTED at 00:00-00:45 (25+ min)")
+print(f"  Humidity violation: 66.0 > 55.0 limit -> DETECTED")
+print(f"  Pressure violation: 40.0 > 20.0 limit -> DETECTED")
+print(f"  Reverse violation: room 40.0 Pa > corridor 29.9 Pa -> DETECTED (Diff negative)")
+print(f"  Reverse violation rows found: {len(reverse_violations)}")
+if len(comparison_df) > 0:
+    print(f"  Min Delta (corridor - room): {comparison_df['Diff'].min():.1f} Pa")
+    print(f"  Max Delta (corridor - room): {comparison_df['Diff'].max():.1f} Pa")
+
+print("=" * 80)
+print("InT-01 COMPLETE")
+print("=" * 80)
+================================================================================
+
+=== Cell 52 (markdown) ===
+### InT-02: Chart Interval Extraction Filter (REAL data, full process)
+================================================================================
+
+=== Cell 53 (code) ===
+print("=" * 80)
+print("InT-02: Chart Interval Extraction Filter (min_length=6) [integration mode]")
+print("=" * 80)
+
+import sys, os, pandas as pd
+import analysis_logic
+
+folder_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\csv_main\\C"
+setpoint_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\SetPointLimit.xlsx"
+
+print("--- STEP 1: Loading SetPointLimit and checking Temperature limit ---")
+setpoint_df = pd.read_excel(setpoint_path).dropna(subset=["Room_number"])
+sp_045 = setpoint_df[setpoint_df["Room_number"] == "1-P045"]
+temp_limit = float(sp_045["Temperature_Limit"].iloc[0])
+print(f"Room 1-P045 (Mixing Room) Temperature Limit: <= {temp_limit} Â°C")
+
+print("\n--- STEP 2: Preparing real data for 1-P045 ---")
+df = analysis_logic.prepare_df(
+    os.path.join(folder_path, "1-P045_05-14-26_01-00.csv"),
+    "1-P045", setpoint_df
+)
+print(f"Total rows loaded: {len(df)}")
+print(f"Date range: {df['DateTime'].min()} to {df['DateTime'].max()}")
+display(df.head(10))
+
+# Filter to a specific day
+day_start = pd.Timestamp("2026-05-13").tz_localize(None)
+day_end = day_start + pd.Timedelta(hours=23, minutes=55)
+df_day = df[(df["DateTime"] >= day_start) & (df["DateTime"] <= day_end)].copy().reset_index(drop=True)
+print(f"Filtered to 2026-05-13: {len(df_day)} rows")
+
+print("\n--- STEP 3: Call get_plot_info() which runs the ENTIRE data pipeline ---")
+print("  (scan folder -> prepare_df each file -> _compute_plot_result -> get_intervals)")
+res = analysis_logic.get_plot_info(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=["1-P045"],
+    start_date="2026-05-13",
+    end_date="2026-05-13",
+    limits=None
+)
+
+print("\n" + "=" * 80)
+print("InT-02 DEBUG OUTPUT: get_plot_info() result")
+print("=" * 80)
+
+print("\n--- Violation Summary (extracted with min_length=6 = 25 min rule) ---")
+summary = res.get("summary", [])
+for s in summary:
+    print(f"  Room {s['room_id']} ({s['room_name']}):")
+    print(f"    temp_violations={s['temp_v']}, hum_violations={s['hum_v']}, press_violations={s['press_v']}")
+
+print("\n--- Violation Intervals (only if >= 6 continuous rows = 25 min) ---")
+intervals = res.get("violation_intervals", [])
+print(f"Total intervals passing the 25-min filter: {len(intervals)}")
+for v in intervals:
+    print(f"  Room {v['room_id']} | {v['type']:12} | {v['status']:5} | {v['start']} to {v['end']} | duration={v['duration']} min")
+
+print("\n--- Plot data structure keys ---")
+plot_data = res.get("plot_data", {})
+print(f"Rooms in plot_data: {list(plot_data.keys())}")
+for room_id, pd_data in plot_data.items():
+    print(f"  {room_id}: times={len(pd_data.get('times', []))}, temp={len(pd_data.get('temp', []))} pts")
+    # Display first 5 entries
+    import IPython.display as disp
+    sample = pd.DataFrame({
+        "DateTime": pd_data["times"][:5],
+        "Temperature": pd_data["temp"][:5],
+        "Humidity": pd_data["hum"][:5],
+        "Pressure": pd_data["press"][:5] if pd_data.get("press") else []
+    })
+    disp.display(sample)
+
+# Also run analyze_files to show the full process output
+print("\n" + "=" * 80)
+print("InT-02: Full analyze_files() process (for cross-reference)")
+print("=" * 80)
+out_path, logs, plot_result = analysis_logic.analyze_files(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=["1-P045"],
+    start_date="2026-05-13",
+    end_date="2026-05-14"
+)
+print(logs)
+if isinstance(plot_result, dict) and "summary" in plot_result:
+    display(plot_result["summary"])
+if isinstance(plot_result, dict) and "violation_intervals" in plot_result:
+    print(f"\nViolation intervals (min_length=6 filtered): {len(plot_result['violation_intervals'])}")
+
+print("=" * 80)
+print("InT-02 COMPLETE")
+print("=" * 80)
+================================================================================
+
+=== Cell 54 (markdown) ===
+### InT-03: Plot Data Directory Scan (REAL data, full process)
+================================================================================
+
+=== Cell 55 (code) ===
+print("=" * 80)
+print("InT-03: Plot Data Directory Scan [integration mode]")
+print("=" * 80)
+
+import sys, os, pandas as pd
+import analysis_logic
+
+folder_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\csv_main\\C"
+setpoint_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\SetPointLimit.xlsx"
+
+print("--- STEP 1: Scanning real CSV directory structure ---")
+all_files = []
+for root, dirs, files in os.walk(folder_path):
+    for f in files:
+        if f.lower().endswith(".csv"):
+            all_files.append(os.path.join(root, f))
+print(f"Total CSV files found in {folder_path}: {len(all_files)}")
+
+print("\n--- STEP 2: Loading SetPointLimit.xlsx ---")
+setpoint_df = pd.read_excel(setpoint_path).dropna(subset=["Room_number"])
+print(f"Total rooms with limits defined: {len(setpoint_df)}")
+
+print("\n--- STEP 3: Calling get_plot_info() - full system process ---")
+print("  (internal pipeline: os.walk -> prepare_df each matching file -> _compute_plot_result)")
+res = analysis_logic.get_plot_info(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=["1-P045"],
+    start_date="2026-05-13",
+    end_date="2026-05-13",
+    limits=None
+)
+
+print("\n" + "=" * 80)
+print("InT-03 DEBUG OUTPUT: get_plot_info() full result")
+print("=" * 80)
+
+print("\n--- Top-level keys ---")
+print(f"Keys in result: {list(res.keys())}")
+
+print("\n--- Summary (violation counts per room) ---")
+for s in res.get("summary", []):
+    print(f"  Room {s['room_id']} ({s['room_name']})")
+    print(f"    Temperature violations (> limit): {s['temp_v']}")
+    print(f"    Humidity violations: {s['hum_v']}")
+    print(f"    Pressure violations: {s['press_v']}")
+
+print("\n--- Plot Data Structure (per room) ---")
+for room_id, pd_data in res.get("plot_data", {}).items():
+    print(f"  Room: {room_id} ({pd_data.get('name', 'N/A')})")
+    print(f"    Times: {len(pd_data.get('times', []))} data points")
+    print(f"    Temperature: {len(pd_data.get('temp', []))} data points")
+    print(f"    Humidity: {len(pd_data.get('hum', []))} data points")
+    print(f"    Pressure: {len(pd_data.get('press', []))} data points")
+    # Show first 5 rows as DataFrame
+    n = min(5, len(pd_data.get('times', [])))
+    sample = pd.DataFrame({
+        "DateTime": pd_data["times"][:n] if pd_data.get("times") else [],
+        "Temperature(Â°C)": pd_data["temp"][:n] if pd_data.get("temp") else [],
+        "Humidity(%RH)": pd_data["hum"][:n] if pd_data.get("hum") else [],
+        "Pressure(Pa)": pd_data["press"][:n] if pd_data.get("press") else []
+    })
+    display(sample)
+
+print("\n--- Violation Intervals (>= 25 min continuous) ---")
+for v in res.get("violation_intervals", []):
+    print(f"  Room {v['room_id']} | {v['type']:12} | {v['status']:5} | {v['start']} to {v['end']} | {v['duration']:.0f} min")
+
+# Run analyze_files to show the full pipeline output
+print("\n" + "=" * 80)
+print("InT-03: Full analyze_files() result (cross-reference)")
+print("=" * 80)
+out_path, logs, plot_result = analysis_logic.analyze_files(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=["1-P045"],
+    start_date="2026-05-13",
+    end_date="2026-05-14"
+)
+print("First 3000 chars of logs (system output):")
+print(logs[:3000])
+if isinstance(plot_result, dict):
+    display(plot_result.get("summary", []))
+
+print("=" * 80)
+print("InT-03 COMPLETE")
+print("=" * 80)
+================================================================================
+
+=== Cell 56 (markdown) ===
+### InT-04: Parameter Violation 25-Min Rule (REAL data, full process)
+================================================================================
+
+=== Cell 57 (code) ===
+print("=" * 80)
+print("InT-04: Parameter Violation 25-Minute Continuous Rule [integration mode]")
+print("=" * 80)
+
+import sys, os, pandas as pd
+import analysis_logic
+
+folder_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\csv_main\\C"
+setpoint_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\SetPointLimit.xlsx"
+
+print("--- STEP 1: Load SetPointLimit.xlsx and inspect temperature specs ---")
+setpoint_df = pd.read_excel(setpoint_path).dropna(subset=["Room_number"])
+sp_045 = setpoint_df[setpoint_df["Room_number"] == "1-P045"]
+print(f"Room 1-P045 Temperature Limit: <= {sp_045['Temperature_Limit'].iloc[0]} Â°C")
+print(f"Room 1-P045 Humidity Range: {sp_045['Humidity_Low_Limit'].iloc[0]}-{sp_045['Humidity_High_Limit'].iloc[0]} %RH")
+print(f"Room 1-P045 Pressure Range: {sp_045['Pressure_Low_Limit'].iloc[0]}-{sp_045['Pressure_High_Limit'].iloc[0]} Pa")
+
+print("\n--- STEP 2: Prepare real data for 1-P045 ---")
+df = analysis_logic.prepare_df(
+    os.path.join(folder_path, "1-P045_05-14-26_01-00.csv"),
+    "1-P045", setpoint_df
+)
+print(f"Total loaded: {len(df)} rows from {df['DateTime'].min()} to {df['DateTime'].max()}")
+display(df.head(10))
+
+# Filter to 2026-05-13
+day_start = pd.Timestamp("2026-05-13").tz_localize(None)
+day_end = day_start + pd.Timedelta(hours=23, minutes=55)
+df_day = df[(df["DateTime"] >= day_start) & (df["DateTime"] <= day_end)].copy().reset_index(drop=True)
+print(f"Filtered to 2026-05-13: {len(df_day)} rows (should be 288 = 24h * 12 = 5min interval)")
+
+print("\n--- STEP 3: Manual simulation of 25-min violation rule ---")
+T_lim = 25.0
+t_df_all = df_day[df_day["Temperature"] > T_lim]
+print(f"Rows with Temperature > {T_lim}Â°C: {len(t_df_all)}")
+if not t_df_all.empty:
+    display(t_df_all[["DateTime", "Temperature"]])
+    
+    # 25-min rule: consecutive rows where DateTime diff == 5 min, with 5th prior row
+    t_25 = t_df_all[t_df_all["DateTime"].diff(5).dt.total_seconds() == 1500]
+    print(f"\nRows at 25-min threshold (diff(5) == 1500s): {len(t_25)}")
+    display(t_25[["DateTime", "Temperature"]])
+    
+    # Expand to include the 5 prior rows for full interval
+    t_idx = sorted(list(set([j for i in t_25.index for j in range(max(i-5, 0), i+1)])))
+    print(f"\nExpanded continuous indices (including prior 5 rows per threshold): {t_idx}")
+    print(f"Continuous ranges: {analysis_logic.find_continuous_ranges(t_idx)}")
+    
+    t_violation_df = df_day.loc[t_idx][["DateTime", "Temperature"]]
+    print(f"\nFull 25-min violation DataFrame ({len(t_violation_df)} rows):")
+    display(t_violation_df)
+else:
+    print("No temperature violations found on this date.")
+
+print("\n--- STEP 4: Call analyze_files() - full system process with 25-min rule ---")
+print("  (The _analyze_single_room_core internally applies the 25-min rule.)")
+out_path, logs, plot_result = analysis_logic.analyze_files(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=["1-P045", "1-P051"],
+    start_date="2026-05-13",
+    end_date="2026-05-14"
+)
+print("\n--- System logs (showing violation detection with 25-min rule) ---")
+print(logs)
+
+print("\n--- Violation intervals from plot_result ---")
+if isinstance(plot_result, dict):
+    display(plot_result.get("summary", []))
+    print("\nDetailed intervals:")
+    for v in plot_result.get("violation_intervals", []):
+        print(f"  {v['room_id']} | {v['type']:12} | {v['start']} -> {v['end']} | {v['duration']:.0f} min ({v['status']})")
+
+print("=" * 80)
+print("InT-04 COMPLETE")
+print("=" * 80)
+================================================================================
+
+=== Cell 58 (markdown) ===
+### InT-05: Phase I Full Statistical Execution (REAL data, full process)
+================================================================================
+
+=== Cell 59 (code) ===
+print("=" * 80)
+print("InT-05: Phase I (BAS) Full Statistical Execution [integration mode]")
+print("=" * 80)
+
+import pandas as pd
+import analysis_logic
+
+folder_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\csv_main\\C"
+setpoint_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\SetPointLimit.xlsx"
+
+print("--- STEP 1: Data Configuration ---")
+setpoint_df = pd.read_excel(setpoint_path).dropna(subset=["Room_number"])
+print(f"SetPointLimit.xlsx loaded: {len(setpoint_df)} rooms")
+print(f"Selected rooms: ['1-P045', '1-P041', '1-P042', '1-P043', '1-P051']")
+print(f"Date range: 2026-05-13 to 2026-05-14")
+
+selected_rooms = ["1-P045", "1-P041", "1-P042", "1-P043", "1-P051"]
+
+print("\n--- STEP 2: Calling analyze_files() - FULL SYSTEM PROCESS ---")
+print("  Pipeline: scan CSV -> build file_date_cache -> validate ERR-005 -> group by date")
+print("  -> prepare_df (each file) -> find_header -> find_point_mapping -> column rename")
+print("  -> find_compare_path (corridor) -> _analyze_single_room_core (T/H/P check)")
+print("  -> check_reverse_violations -> _compute_plot_result -> Excel Report")
+print("  Please wait...\n")
+
+out_path, logs, plot_result = analysis_logic.analyze_files(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=selected_rooms,
+    start_date="2026-05-13",
+    end_date="2026-05-14"
+)
+
+print("\n" + "=" * 80)
+print("InT-05 DEBUG OUTPUT: Full logs from system process")
+print("=" * 80)
+print(logs)
+
+print("\n" + "=" * 80)
+print("InT-05: Structured Results")
+print("=" * 80)
+
+print("--- Output Excel Report ---")
+if out_path:
+    print(f"Report generated: {out_path}")
+    import os
+    print(f"File exists on disk: {os.path.exists(out_path)}")
+    print(f"File size: {os.path.getsize(out_path):,} bytes")
+else:
+    print("No report generated (analysis failed)")
+
+print("\n--- Plot Result Summary ---")
+if isinstance(plot_result, dict):
+    print(f"Keys in plot_result: {list(plot_result.keys())}")
+    
+    if "summary" in plot_result:
+        summary_df = pd.DataFrame(plot_result["summary"])
+        print("\nViolation Summary per Room:")
+        display(summary_df)
+        total_rooms = len(summary_df)
+        rooms_with_violations = sum(1 for _, r in summary_df.iterrows() if r["temp_v"] + r["hum_v"] + r["press_v"] > 0)
+        print(f"Passed: {total_rooms - rooms_with_violations}, Violations: {rooms_with_violations}")
+    
+    if "violation_intervals" in plot_result:
+        v_df = pd.DataFrame(plot_result["violation_intervals"])
+        if not v_df.empty:
+            print("\nDetailed Violation Intervals:")
+            display(v_df)
+    
+    if "stats" in plot_result:
+        print("\nStatistics:")
+        display(plot_result["stats"])
+
+print("\n--- Analysis Complete ---")
+print(f"Rooms analyzed: {selected_rooms}")
+print(f"Period: 2026-05-13 to 2026-05-14")
+
+print("=" * 80)
+print("InT-05 COMPLETE")
+print("=" * 80)
+
+================================================================================
+
+=== Cell 60 (markdown) ===
+### InT-06: Phase II Full Statistical Execution (REAL data, full process)
+================================================================================
+
+=== Cell 61 (code) ===
+print("=" * 80)
+print("InT-06: Phase II (EMS) Full Statistical Execution [integration mode]")
+print("=" * 80)
+
+import sys, os, pandas as pd
+import analysis_logic
+
+folder_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\csv_b11"
+setpoint_path = r"D:\\ex_work\\AirQualityReview_Project\\data\\SetPointLimit_B11.xlsx"
+
+print("--- STEP 1: Data Configuration ---")
+setpoint_df = pd.read_excel(setpoint_path).dropna(subset=["Room_number"])
+print(f"SetPointLimit_B11.xlsx loaded: {len(setpoint_df)} rooms")
+print(f"Selected rooms: ['11-1-012', '11-1-013']")
+print(f"Date range: 2026-05-01 to 2026-05-02")
+print(f"Folder: {folder_path}")
+
+print("\n--- STEP 2: Verify Phase II room directories exist ---")
+for d in os.listdir(folder_path):
+    dp = os.path.join(folder_path, d)
+    if os.path.isdir(dp):
+        csvs = [f for f in os.listdir(dp) if f.lower().endswith('.csv')]
+        if csvs:
+            print(f"  {d}/: {len(csvs)} CSV files (e.g. {csvs[0][:50]}...)")
+
+print("\n--- STEP 3: Inspect room specs from SetPointLimit_B11 ---")
+for r in ["11-1-012", "11-1-013"]:
+    sp = setpoint_df[setpoint_df["Room_number"] == r]
+    if not sp.empty:
+        print(f"  {r} ({sp['Room_name'].iloc[0]}):")
+        print(f"    T<={sp['Temperature_Limit'].iloc[0]}Â°C, H={sp['Humidity_Low_Limit'].iloc[0]}-{sp['Humidity_High_Limit'].iloc[0]}%RH, P={sp['Pressure_Low_Limit'].iloc[0]}-{sp['Pressure_High_Limit'].iloc[0]}Pa")
+
+print("\n--- STEP 4: Call analyze_files_phase2() - FULL SYSTEM PROCESS ---")
+print("  Pipeline: scan_phase2_rooms -> prepare_df_phase2 (RMT/RMH/RDP merge) -> day loop")
+print("  -> _analyze_single_room_core (T/H/P check) -> check_reverse_violations")
+print("  -> _compute_plot_result -> Excel Report")
+print("  Please wait...\n")
+
+out_path, logs, plot_result = analysis_logic.analyze_files_phase2(
+    folder_path=folder_path,
+    setpoint_path=setpoint_path,
+    selected_rooms=["11-1-012", "11-1-013"],
+    start_date="2026-05-01",
+    end_date="2026-05-02"
+)
+
+print("\n" + "=" * 80)
+print("InT-06 DEBUG OUTPUT: Full logs from Phase II system process")
+print("=" * 80)
+print(logs)
+
+print("\n" + "=" * 80)
+print("InT-06: Structured Results")
+print("=" * 80)
+
+print("--- Output Excel Report ---")
+if out_path:
+    print(f"Report generated: {out_path}")
+    print(f"File exists on disk: {os.path.exists(out_path)}")
+    print(f"File size: {os.path.getsize(out_path):,} bytes")
+else:
+    print("No report generated")
+
+print("\n--- Manual data inspection: prepare_df_phase2 for 11-1-012 ---")
+room_dir = os.path.join(folder_path, "2026-05-01")
+room_id, df_p2, sensors = analysis_logic.prepare_df_phase2(room_dir, "11-1-012", setpoint_df)
+print(f"Room ID: {room_id}")
+print(f"Sensors discovered: {sensors}")
+print(f"DataFrame shape: {df_p2.shape}")
+print(f"Date range: {df_p2['DateTime'].min()} to {df_p2['DateTime'].max()}")
+display(df_p2.head(15))
+
+print("\n--- Plot Result Summary ---")
+if isinstance(plot_result, dict):
+    print(f"Keys in plot_result: {list(plot_result.keys())}")
+    if "summary" in plot_result:
+        summary_df = pd.DataFrame(plot_result["summary"])
+        display(summary_df)
+    if "violation_intervals" in plot_result:
+        v_df = pd.DataFrame(plot_result["violation_intervals"])
+        if not v_df.empty:
+            print("Violation intervals:")
+            display(v_df)
+    if "stats" in plot_result:
+        display(plot_result["stats"])
+
+print("=" * 80)
+print("InT-06 COMPLETE")
+print("=" * 80)
+
+================================================================================
+
