@@ -5,6 +5,41 @@
 
 **Current Version: 1.1.0**
 
+## Executive Summary
+
+Air Quality Review is a Flask-based analytics application for industrial environmental monitoring data. It helps quality and engineering teams review BAS/EMS room data, detect out-of-spec conditions, generate standardized Excel reports, and inspect trends without manually combining hundreds of raw CSV exports.
+
+This project is strongest as a portfolio example of regulated data software: it combines data validation, long-running background analysis, real-time progress streaming, audit trail design, and report generation into one local application.
+
+### What This Demonstrates
+
+- **Industrial data processing:** Parses room-level temperature, humidity, and pressure data from Phase I BAS files and Phase II EMS folder structures.
+- **Compliance-oriented logic:** Applies setpoint limits, data-loss detection, continuous violation rules, error codes, and audit trail verification.
+- **Scalable UX:** Uses background workers plus Server-Sent Events so large analyses stream progress without freezing the browser.
+- **Reporting:** Generates structured Excel reports and interactive visual graphs for investigation.
+- **Production packaging:** Includes executable build notes and a Waitress-based runtime path for Windows distribution.
+
+### Reviewer Path
+
+If you are reviewing this repository for hiring, start here:
+
+1. Read **Compliance & Quality Highlights** for the domain and validation mindset.
+2. Read **Architecture Overview** for the background-job and streaming design.
+3. Read **API Endpoints** to understand the application surface.
+4. Read **Phase I vs Phase II** to see how the system handles different industrial data formats.
+5. Read **Phase II - Status & Verification** for completed implementation scope.
+
+### Tech Stack
+
+- Python, Flask, Waitress
+- pandas, Excel reporting
+- Server-Sent Events
+- Browser-based data visualization
+- PyInstaller packaging
+- JSON audit trail with hash-chain verification
+
+---
+
 ### Recent Updates (v1.1.0_Fix)
 - **Data Transformation (Split Module) Enhancements:**
   - Expanded parsing logic to correctly handle room ID formats for both Pilot Plant (`1-S026`, etc.) and MO5 (`M5...2P...`) files.
@@ -19,7 +54,7 @@
 - **Data Integrity:** Implements strict data validation, temporal alignment (using `merge_asof`), and error-handling protocols (ERR-001 through ERR-010).
 - **Audit-Ready Reporting:** Generates standardized, immutable Excel reports with integrated audit trail logging.
 - **Enterprise Ready:** Supports both BAS (Phase I) and EMS (Phase II) data sources with room-level segmentation and setpoint limit verification.
-- **Scalable Streaming:** Real-time log streaming via Server-Sent Events (SSE) — designed to handle thousands of rooms without browser freezing.
+- **Scalable Streaming:** Real-time log streaming via Server-Sent Events (SSE), designed to handle thousands of rooms without browser freezing.
 
 ---
 
