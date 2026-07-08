@@ -314,8 +314,13 @@ def api_split_reports():
                 except:
                     filename = f"M5 {room_code}_unknown.csv"
                 
-                _write_custom_csv(room_df, os.path.join(output_dir, filename), 
-                                 [temp_point or "", hum_point or "", pressure_point or ""])
+                header_names_m5 = [
+                    names_m5.get(int(temp_point.replace('Point_', '')), "") if temp_point else "",
+                    names_m5.get(int(hum_point.replace('Point_', '')), "") if hum_point else "",
+                    names_m5.get(int(pressure_point.replace('Point_', '')), "") if pressure_point else ""
+                ]
+                
+                _write_custom_csv(room_df, os.path.join(output_dir, filename), header_names_m5)
                 logs.append(f"  Created: {filename}")
 
         # Process Main Plant
@@ -325,10 +330,14 @@ def api_split_reports():
             df_h, names_h = process_file_manual(rmh_file)
             df_p, names_p = process_file_manual(rpt_file)
             
+            # Get unique room codes from temperature points
+            unique_rooms = set()
             for p_idx in names_t:
                 room_code = _get_room_code(names_t.get(p_idx), is_m5=False)
-                if not room_code: continue
-                
+                if room_code:
+                    unique_rooms.add(room_code)
+                    
+            for room_code in unique_rooms:
                 room_df = df_t[['<>Date', 'Time']].copy()
                 
                 # CRITICAL FIX: Use dynamic mapping for all three point types
@@ -357,16 +366,12 @@ def api_split_reports():
                 if temp_point and temp_point in df_t.columns:
                     room_df['Point_1'] = df_t[temp_point]
                 else:
-                    # Fallback to original logic
-                    col_name = f'Point_{p_idx}'
-                    room_df['Point_1'] = df_t[col_name] if col_name in df_t.columns else "No Data"
+                    room_df['Point_1'] = "No Data"
                 
                 if hum_point and hum_point in df_h.columns:
                     room_df['Point_2'] = df_h[hum_point]
                 else:
-                    # Fallback to original logic
-                    col_name = f'Point_{p_idx}'
-                    room_df['Point_2'] = df_h[col_name] if col_name in df_h.columns else "No Data"
+                    room_df['Point_2'] = "No Data"
                 
                 # Use dynamically found pressure point with fallback
                 if pressure_point and pressure_point in df_p.columns:
@@ -403,7 +408,13 @@ def api_split_reports():
                 except:
                     filename = f"{room_code}_unknown.csv"
                 
-                _write_custom_csv(room_df, os.path.join(output_dir, filename), [names_t.get(p_idx, ""), names_h.get(p_idx, ""), names_p.get(p_idx, "")])
+                header_names = [
+                    names_t.get(int(temp_point.replace('Point_', '')), "") if temp_point else "",
+                    names_h.get(int(hum_point.replace('Point_', '')), "") if hum_point else "",
+                    names_p.get(int(pressure_point.replace('Point_', '')), "") if pressure_point else ""
+                ]
+                
+                _write_custom_csv(room_df, os.path.join(output_dir, filename), header_names)
                 logs.append(f"  Created: {filename}")
 
         # Process Pilot Plant
@@ -425,10 +436,14 @@ def api_split_reports():
                 logs.append(f"Error reading Pilot headers: {e}")
                 rmt_lines, rmh_lines, rpt_lines = [], [], []
 
+            # Get unique room codes from temperature points
+            unique_rooms_pilot = set()
             for p_idx in names_t_pilot:
                 room_code = _get_room_code(names_t_pilot.get(p_idx), is_pilot=True)
-                if not room_code: continue
-                
+                if room_code:
+                    unique_rooms_pilot.add(room_code)
+                    
+            for room_code in unique_rooms_pilot:
                 room_df = df_t_pilot[['<>Date', 'Time']].copy()
                 
                 # Dynamic mapping for Pilot Plant
@@ -440,22 +455,19 @@ def api_split_reports():
                 if temp_point and temp_point in df_t_pilot.columns:
                     room_df['Point_1'] = df_t_pilot[temp_point]
                 else:
-                    col_name = f'Point_{p_idx}'
-                    room_df['Point_1'] = df_t_pilot[col_name] if col_name in df_t_pilot.columns else "No Data"
+                    room_df['Point_1'] = "No Data"
                 
                 # Humidity extraction with fallback
                 if hum_point and hum_point in df_h_pilot.columns:
                     room_df['Point_2'] = df_h_pilot[hum_point]
                 else:
-                    col_name = f'Point_{p_idx}'
-                    room_df['Point_2'] = df_h_pilot[col_name] if col_name in df_h_pilot.columns else "No Data"
+                    room_df['Point_2'] = "No Data"
                 
-                # Pressure extraction with fallback (Fixes the "No Data" issue)
+                # Pressure extraction with fallback
                 if pressure_point and pressure_point in df_p_pilot.columns:
                     room_df['Point_3'] = df_p_pilot[pressure_point]
                 else:
-                    col_name = f'Point_{p_idx}'
-                    room_df['Point_3'] = df_p_pilot[col_name] if col_name in df_p_pilot.columns else "No Data"
+                    room_df['Point_3'] = "No Data"
                 
                 try:
                     first_date = datetime.datetime.strptime(room_df.iloc[0]['<>Date'], '%m/%d/%Y')
@@ -463,7 +475,13 @@ def api_split_reports():
                 except:
                     filename = f"{room_code}_unknown.csv"
                 
-                _write_custom_csv(room_df, os.path.join(output_dir, filename), [names_t_pilot.get(p_idx, ""), names_h_pilot.get(p_idx, ""), names_p_pilot.get(p_idx, "")])
+                header_names_pilot = [
+                    names_t_pilot.get(int(temp_point.replace('Point_', '')), "") if temp_point else "",
+                    names_h_pilot.get(int(hum_point.replace('Point_', '')), "") if hum_point else "",
+                    names_p_pilot.get(int(pressure_point.replace('Point_', '')), "") if pressure_point else ""
+                ]
+                
+                _write_custom_csv(room_df, os.path.join(output_dir, filename), header_names_pilot)
                 logs.append(f"  Created: {filename}")
 
         return jsonify({'logs': logs, 'status': 'success'})
@@ -574,7 +592,7 @@ def get_rooms():
         except FileNotFoundError:
             return jsonify({'error': 'ERR-002: Limit File Not Found'}), 400
         
-        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        required_cols = ['Room_number', 'Room_name', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
         missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
         if missing_cols:
             audit_trail.log_event("ALARM_TRIGGERED", f"Action: get-rooms | Code: ERR-009 | Msg: Missing required columns: {', '.join(missing_cols)}")

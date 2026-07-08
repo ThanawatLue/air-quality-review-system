@@ -54,7 +54,6 @@ def find_point_mapping(line_lst, target_room_id, point_type=None): # Find which 
     room_id_patterns = [
         room_number,  # Exact room number (e.g., "1-P040")
         room_number.replace('-', ''),  # Without hyphens (e.g., "1P040")
-        room_number.split('-')[-1],  # Last part only (e.g., "P040")
         target_room_id,  # Full target ID
         target_room_id.replace('-', ''),  # Full ID without hyphens
     ]
@@ -79,7 +78,7 @@ def find_point_mapping(line_lst, target_room_id, point_type=None): # Find which 
     for line in line_lst:
         if 'Point_' in line and any(pattern in line for pattern in search_patterns):
             parts = line.replace('"','').split(',')
-            if len(parts) >= 2:
+            if len(parts) >= 2 and "Error" not in line:
                 point_name = parts[0].strip().replace(':', '')  # Remove trailing colon
                 room_identifier = parts[1].strip()
                 all_points.append((point_name, room_identifier))
@@ -442,7 +441,7 @@ def _compute_plot_result(room_data_map, setpoint_df, selected_rooms, start_dt, e
 def get_plot_info(folder_path, setpoint_path, selected_rooms, start_date, end_date, limits):
     try:
         setpoint_df = pd.read_excel(setpoint_path)
-        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        required_cols = ['Room_number', 'Room_name', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
         missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
         if missing_cols:
             raise ValueError(f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}")
@@ -597,14 +596,14 @@ def _analyze_single_room_core(
     t_loss_idx = df[df['Temperature'].isna()].index.tolist()
     if t_loss_idx:
         print(f"Temperature Data Loss Found for {room_num}:")
-        print_df = df.loc[t_loss_idx, ['DateTime', 'Temperature']].copy()
-        print_df['Temperature'] = 'Data Loss'
-        _print_df(print_df)
         loss_lines = []
         for i in find_continuous_ranges(t_loss_idx, min_length=1):
             t_range = df.loc[i[0]:i[1]]
-            loss_lines.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
+            loss_lines.append(f'\n{t_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {t_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} (Data Loss)')
         
+        for line in loss_lines:
+            print(f"  {line.strip()}")
+            
         if temp_res == f'Temperature: {tick_mark}':
             temp_res = f'Temperature: Data Loss' + ''.join(loss_lines)
         else:
@@ -647,14 +646,14 @@ def _analyze_single_room_core(
         h_loss_idx = df[df['Humidity'].isna()].index.tolist()
         if h_loss_idx:
             print(f"Humidity Data Loss Found for {room_num}:")
-            print_df = df.loc[h_loss_idx, ['DateTime', 'Humidity']].copy()
-            print_df['Humidity'] = 'Data Loss'
-            _print_df(print_df)
             loss_lines = []
             for i in find_continuous_ranges(h_loss_idx, min_length=1):
                 h_range = df.loc[i[0]:i[1]]
-                loss_lines.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
+                loss_lines.append(f'\n{h_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {h_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} (Data Loss)')
             
+            for line in loss_lines:
+                print(f"  {line.strip()}")
+                
             if hum_res == f'\nHumidity: {tick_mark}':
                 hum_res = f'\nHumidity: Data Loss' + ''.join(loss_lines)
             else:
@@ -764,14 +763,14 @@ def _analyze_single_room_core(
         p_loss_idx = df[df['Pressure'].isna()].index.tolist()
         if p_loss_idx:
             print(f"Pressure Data Loss Found for {room_num}:")
-            print_df = df.loc[p_loss_idx, ['DateTime', 'Pressure']].copy()
-            print_df['Pressure'] = 'Data Loss'
-            _print_df(print_df)
             loss_lines = []
             for i in find_continuous_ranges(p_loss_idx, min_length=1):
                 p_range = df.loc[i[0]:i[1]]
-                loss_lines.append(f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]}')
+                loss_lines.append(f'\n{p_range["DateTime"].dt.strftime("%H:%M").iloc[0]} to {p_range["DateTime"].dt.strftime("%H:%M").iloc[-1]} (Data Loss)')
             
+            for line in loss_lines:
+                print(f"  {line.strip()}")
+                
             if press_res == f'\nPressure: {tick_mark}':
                 press_res = f'\nPressure: Data Loss' + ''.join(loss_lines)
             elif press_res.startswith(f'\nPressure: {cross_mark}'):
@@ -797,7 +796,7 @@ def analyze_files(folder_path, setpoint_path, selected_rooms=None, start_date=No
         except FileNotFoundError:
             raise ValueError("ERR-002: Limit File Not Found")
             
-        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        required_cols = ['Room_number', 'Room_name', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
         missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
         if missing_cols:
             raise ValueError(f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}")
@@ -1298,7 +1297,7 @@ def analyze_files_phase2(folder_path, setpoint_path, selected_rooms=None, start_
         except FileNotFoundError:
             raise ValueError("ERR-002: Limit File Not Found")
 
-        required_cols = ['Room_number', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
+        required_cols = ['Room_number', 'Room_name', 'Temperature_Limit', 'Humidity_Low_Limit', 'Humidity_High_Limit', 'Pressure_Low_Limit', 'Pressure_High_Limit']
         missing_cols = [col for col in required_cols if col not in setpoint_df.columns]
         if missing_cols:
             raise ValueError(f"ERR-009: Invalid Limit File Format - Missing required columns: {', '.join(missing_cols)}")

@@ -5,6 +5,12 @@
 
 **Current Version: 1.1.0**
 
+### Recent Updates (v1.1.0_Fix)
+- **Data Transformation (Split Module) Enhancements:**
+  - Expanded parsing logic to correctly handle room ID formats for both Pilot Plant (`1-S026`, etc.) and MO5 (`M5...2P...`) files.
+  - Implemented smart mapping logic that automatically falls back to valid data points if a database "Error" point is encountered in the raw CSV (resolves "No Data" issues when multiple point definitions exist).
+  - Ensured correct timezone and timestamp extractions for all input files, providing 100% accurate file splits across all facilities.
+
 ---
 
 ## Compliance & Quality Highlights

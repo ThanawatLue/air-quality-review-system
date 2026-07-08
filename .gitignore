@@ -37,3 +37,23 @@ Thumbs.db
 # Temporary files
 *.log
 *.tmp
+
+# Secrets
+.env
+*.env
+config.yaml
+*.key
+*.pub
+
+# Security & Credentials
+.env
+*.pem
+*.key
+secrets.json
+credentials.json
+config.json
+__pycache__/
+.venv/
+.venv-dashboard/
+node_modules/
+.DS_Store

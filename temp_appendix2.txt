@@ -1,0 +1,312 @@
+Enclosure 1: Module (Unit) Specification (MS)
+
+Module Lists
+
+No.
+
+Module ID
+
+Module Name
+
+Def
+
+1
+
+MT-01
+
+Software Installation
+
+N/A (เป็นขั้นตอนการติดตั้ง Dependencies และ Build .exe ไม่ใช่ Function ในโค้ด)
+
+2
+
+MT-02
+
+SHA-256 Cryptographic Checksum
+
+get_file_hash [analysis_logic.py]
+
+3
+
+MT-03
+
+File Header Detection
+
+find_header [analysis_logic.py]
+
+4
+
+MT-04
+
+Room ID And Point Type Mapping
+
+Find_point_mapping [analysis_logic.py]
+
+5
+
+MT-05
+
+Continuous Range Processing
+
+find_continuous_ranges [analysis_logic.py]
+
+6
+
+MT-06
+
+File Date Range Extraction (Insight/Info Format)
+
+get_file_date_range [analysis_logic.py]
+
+7
+
+MT-07
+
+Dataframe Preparation (Insight/Info Format)
+
+prepare_df [analysis_logic.py]
+
+8
+
+MT-08
+
+Pressure Corridor Matching
+
+find_compare_path [analysis_logic.py]
+
+9
+
+MT-09
+
+Data Timestamp
+
+parse_filename_for_datetime [analysis_logic.py]
+
+10
+
+MT-10
+
+Dataframe Preparation (Desigo Format)
+
+prepare_df_phase2 [analysis_logic.py]
+
+11
+
+MT-11
+
+File Date Range Extraction (Desigo Format)
+
+get_file_date_range_phase2 [analysis_logic.py]
+
+
+
+Module Specification
+
+Module Specification: Software Installation (MT-01)
+
+Module ID
+
+MT-01
+
+Module Name
+
+Software Installation
+
+Description
+
+This is not a specific function in the code. It refers to the environment setup process, such as installing dependencies or building the executable application.
+
+
+
+	
+
+
+
+(Fig.1 AQR_Dashboard_v1.1.0_Fix.spec that script to use for building executable (.exe) file by the Pyinstaller library)
+
+Module Specification: SHA-256 Cryptographic Checksum (MT-02)
+
+Module ID
+
+MT-02
+
+Module Name
+
+SHA-256 Cryptographic Checksum
+
+Description
+
+Calculates the SHA-256 hash of data files and setpoint files according to GAMP 5 standards (UR-DI-03). This ensures that the files have not been modified and guarantees data traceability.
+
+
+
+(Fig.2 get_file_hash(…) function in analysis_logic.py)
+
+Module Specification: File Header Detection (MT-03)
+
+Module ID
+
+MT-03
+
+Module Name
+
+File Header Detection
+
+Description
+
+Searches for the header line (which starts with <>Date) in Phase I BAS CSV files to identify the exact starting point for reading the actual data payload.
+
+
+
+(Fig.3 find_header(…) function in analysis_logic.py)
+
+Module Specification: Room ID And Point Type Mapping (MT-04)
+
+Module ID
+
+MT-04
+
+Module Name
+
+Room ID And Point Type Mapping
+
+Description
+
+Groups index numbers to find periods where parameter values are continuously out of specification. It checks if the violation lasts longer than the defined min_length (for example, a continuous violation of 25 minutes or more).
+
+
+
+(Fig.4 find_continuous_ranges(…) function in analysis_logic.py)
+
+
+
+Module Specification: Continuous Range Processing (MT-05)
+
+Module ID
+
+MT-05
+
+Module Name
+
+Continuous Range Processing
+
+Description
+
+Reads the CSV header to determine which data column (e.g., Point_1, Point_2) corresponds to the specific sensor type (TEMP, HUM, PRES) for the target room.
+
+
+
+
+
+(Fig.5 find_point_mapping(…) function in analysis_logic.py)
+
+Module Specification: File Date Range Extraction (Insight/Info Format) (MT-06)
+
+Module ID
+
+MT-06
+
+Module Name
+
+File Date Range Extraction (Insight/Info Format)
+
+Description
+
+Extracts the start and end dates directly from the contents of the CSV file (Phase I / Insight Format) to accurately determine the temporal boundaries of the dataset being analyzed.
+
+
+
+(Fig.6 get_file_date_range(…) function in analysis_logic.py)
+
+Module Specification: Dataframe Preparation (Insight/Info Format) (MT-07)
+
+Module ID
+
+MT-07
+
+Module Name
+
+Dataframe Preparation (Insight/Info Format)
+
+Description
+
+Reads the raw CSV data from the Phase I BAS system. It cleans, structures, and converts the data into a standard DataFrame format, making it ready for analysis.
+
+
+
+
+
+(Fig.7 prepare_df(…) function in analysis_logic.py)
+
+Module Specification: Pressure Corridor Matching (MT-08)
+
+Module ID
+
+MT-08
+
+Module Name
+
+Pressure Corridor Matching
+
+Description
+
+Identifies and matches the file path of the "Corridor room" that is required for differential pressure comparisons.
+
+
+
+(Fig.8 find_compare_path(…) function in analysis_logic.py)
+
+Module Specification: Data Timestamp (MT-09)
+
+Module ID
+
+MT-09
+
+Module Name
+
+Data Timestamp
+
+Description
+
+Extracts the date and time from the filename to establish the starting point for the analysis. It also applies legacy business logic by subtracting one day from the extracted date.
+
+
+
+(Fig.9 parse_filename_for_datetime(…) function in analysis_logic.py)
+
+Module Specification: Dataframe Preparation (Desigo Format) (MT-10)
+
+Module ID
+
+MT-10
+
+Module Name
+
+Dataframe Preparation (Desigo Format)
+
+Description
+
+Similar to prepare_df, but designed for Phase II (EMS / Desigo). It merges multiple separate CSV files for different sensors (Temperature: RMT, Humidity: RMH, Pressure: RDP) into a single, unified DataFrame for analysis.
+
+
+
+(Fig.10 prepare_df_phase2(…) function in analysis_logic.py)
+
+Module Specification: File Date Range Extraction (Desigo Format) (MT-11)
+
+Module ID
+
+MT-11
+
+Module Name
+
+File Date Range Extraction (Desigo Format)
+
+Description
+
+Similar to MT-06, but it determines the overall time range by combining and checking multiple sub-files (RMT/RMH/RDP) within a Phase II (EMS) folder.
+
+
+
+(Fig.11 get_file_date_range_phase2(…) function in analysis_logic.py)
+
